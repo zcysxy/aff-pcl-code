@@ -19,7 +19,7 @@ class Config:
     # Controls the spread of true reward vectors (theta_star_i)
     reward_heterogeneity = 0.5
     # Standard deviation for stochastic noise in A(s) and b(s)
-    noise_std_A = 0.5
+    noise_std_A = 1
     noise_std_Phi = 0.5
     n_runs = 3
     backup_dir = "bkup"
@@ -53,7 +53,6 @@ def generate_synthetic_data(config: Config):
     A_bar_base = _temp_A.T @ _temp_A + config.dim * np.eye(config.dim) # nice conditioning
 
     _temp_Phi = np.random.randn(config.dim, config.dim)
-    Phi = _temp_Phi.T @ _temp_Phi + config.dim * np.eye(config.dim) # nice conditioning
     Phi_bar_base = _temp_Phi.T @ _temp_Phi + config.dim * np.eye(config.dim) # nice conditioning
 
 
@@ -69,10 +68,10 @@ def generate_synthetic_data(config: Config):
 
     def b_func(s, theta_star):
         # The stochastic label b^i(s) follows a linear structure.
-        return Phi @ theta_star
-        # return Phi_func(s) @ theta_star
+        # return Phi @ theta_star
+        return Phi_func(s) @ theta_star
 
-    # --- Create heterogeneous true reward parameters (theta_star_i) ---
+    # Create heterogeneous true reward parameters (theta_star_i)
     theta_star_base = np.random.randn(config.dim)
     theta_star_base = theta_star_base / np.linalg.norm(theta_star_base)
     thetas_star = []
@@ -85,7 +84,7 @@ def generate_synthetic_data(config: Config):
         theta_star = theta_star_base + config.reward_heterogeneity * rand_vec_normalized
         thetas_star.append(theta_star)
 
-    # --- Calculate ground truth solutions x_star_i via Monte Carlo ---
+    # Calculate ground truth solutions x_star_i via Monte Carlo
     # The true solution x_star_i = inv(A_bar_i) @ b_bar_i, where the bars
     # denote expectation over mu_i. We approximate this with sampling.
     print("Calculating ground truth solutions via Monte Carlo...")
@@ -94,11 +93,11 @@ def generate_synthetic_data(config: Config):
     for i in range(config.n_agents):
         samples = distributions[i].rvs(size=n_samples_mc)
         A_bar_i = np.mean([A_func(s) for s in samples], axis=0)
-        b_bar_i = np.mean([Phi @ thetas_star[i] for s in samples], axis=0)
+        b_bar_i = np.mean([b_func(s,thetas_star[i]) for s in samples], axis=0)
         x_star_i = np.linalg.solve(A_bar_i, b_bar_i)
         x_stars.append(x_star_i)
 
-    # --- Define density ratio function rho^i(s) ---
+    # Define density ratio function rho^i(s)
     # rho^i(s) = mu^i(s) / mu^0(s), where mu^0 = (1/n) * sum(mu^j)
     def rho_func(s, i):
         mu_i_pdf = distributions[i].pdf(s)
@@ -109,7 +108,7 @@ def generate_synthetic_data(config: Config):
         'distributions': distributions,
         'A_func': A_func,
         'b_func': b_func,
-        'Phi': Phi,
+        'Phi_func': Phi_func,
         'thetas_star': thetas_star,
         'x_stars': x_stars,
         'rho_func': rho_func,
@@ -182,12 +181,12 @@ def run_personalized_collaborative(data: dict, config: Config):
         grad_agg_b = np.zeros(config.dim)
         grad_agg_c = np.zeros(config.dim)
         
-        b_hat_c_t = lambda s: data['Phi'] @ theta_c # Learned central reward at step t
+        b_hat_c_t = lambda s: data['Phi_func'](s) @ theta_c # Learned central reward at step t
 
         for j in range(config.n_agents):
             s_t_j = samples[j]
             # Gradient for central reward learning
-            grad_agg_b += data['Phi'] @ theta_c - data['b_func'](s_t_j, data['thetas_star'][j])
+            grad_agg_b += data['Phi_func'](s_t_j) @ theta_c - data['b_func'](s_t_j, data['thetas_star'][j])
             # Gradient for central model learning
             grad_agg_c += data['A_func'](s_t_j) @ x_c - b_hat_c_t(s_t_j)
         
@@ -253,8 +252,8 @@ def run_experiments_with_repeats(config):
 
         # Low Heterogeneity
         print(f"Run {run+1}/{n_runs} - Low Heterogeneity")
-        config.kernel_heterogeneity = 0.1
-        config.reward_heterogeneity = 0.1
+        config.kernel_heterogeneity = 0.05
+        config.reward_heterogeneity = 0.05
         data_low_het = generate_synthetic_data(config)
         errors_ind_low[run] = run_independent_learning(data_low_het, config)
         errors_fedavg_low[run] = run_federated_averaging(data_low_het, config)
@@ -271,8 +270,8 @@ def run_experiments_with_repeats(config):
 
         # High Heterogeneity
         print(f"Run {run+1}/{n_runs} - High Heterogeneity")
-        config.kernel_heterogeneity = 0.5
-        config.reward_heterogeneity = 0.5
+        config.kernel_heterogeneity = 0.6
+        config.reward_heterogeneity = 0.6
         data_high_het = generate_synthetic_data(config)
         errors_ind_high[run] = run_independent_learning(data_high_het, config)
         errors_fedavg_high[run] = run_federated_averaging(data_high_het, config)
