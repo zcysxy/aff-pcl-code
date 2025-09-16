@@ -19,9 +19,15 @@ class Config:
     # Controls the spread of true reward vectors (theta_star_i)
     reward_heterogeneity = 0.5
     # Standard deviation for stochastic noise in A(s) and b(s)
+    heterogeneity_settings = {
+        'homogeneous': (0.0, 0.0),
+        'low': (0.05, 0.05),
+        'medium': (0.2, 0.2),
+        'high': (0.5, 0.5),
+    }
     noise_std_A = 1
     noise_std_Phi = 0.5
-    n_runs = 3
+    n_runs = 5
     backup_dir = "bkup"
     backup_files = [f for f in os.listdir(backup_dir) if f.endswith(".pkl")]
 
@@ -224,81 +230,42 @@ def run_personalized_collaborative(data: dict, config: Config):
 def run_experiments_with_repeats(config):
     n_runs = config.n_runs
     n_iter = config.n_iterations
+    heterogeneity_settings = config.heterogeneity_settings
     
-    # Arrays to store errors for each run
-    errors_ind_homogeneous = np.zeros((n_runs, n_iter))
-    errors_fedavg_homogeneous = np.zeros((n_runs, n_iter))
-    errors_pcl_homogeneous = np.zeros((n_runs, n_iter))
-    errors_ind_low = np.zeros((n_runs, n_iter))
-    errors_fedavg_low = np.zeros((n_runs, n_iter))
-    errors_pcl_low = np.zeros((n_runs, n_iter))
-    errors_ind_medium = np.zeros((n_runs, n_iter))
-    errors_fedavg_medium = np.zeros((n_runs, n_iter))
-    errors_pcl_medium = np.zeros((n_runs, n_iter))
-    errors_ind_high = np.zeros((n_runs, n_iter))
-    errors_fedavg_high = np.zeros((n_runs, n_iter))
-    errors_pcl_high = np.zeros((n_runs, n_iter))
-    
+    methods = {
+        'ind': run_independent_learning,
+        'fedavg': run_federated_averaging,
+        'pcl': run_personalized_collaborative,
+    }
+
+    # Initialize error arrays
+    errors = {
+        het: {method: np.zeros((n_runs, n_iter)) for method in methods}
+        for het in heterogeneity_settings
+    }
+
+    def run_all_methods(data, config, run_idx, het_key):
+        for method_key, method_func in methods.items():
+            errors[het_key][method_key][run_idx] = method_func(data, config)
+
     for run in range(n_runs):
-        # Homogeneous
-        print(f"Run {run+1}/{n_runs} - Homogeneous")
-        config.kernel_heterogeneity = 0.0
-        config.reward_heterogeneity = 0.0
-        data_homogeneous = generate_synthetic_data(config)
-        errors_ind_homogeneous[run] = run_independent_learning(data_homogeneous, config)
-        errors_fedavg_homogeneous[run] = run_federated_averaging(data_homogeneous, config)
-        errors_pcl_homogeneous[run] = run_personalized_collaborative(data_homogeneous, config)
+        for het_key, (kernel_het, reward_het) in heterogeneity_settings.items():
+            print(f"Run {run+1}/{n_runs} - {het_key.capitalize()} Heterogeneity")
+            config.kernel_heterogeneity = kernel_het
+            config.reward_heterogeneity = reward_het
+            data = generate_synthetic_data(config)
+            run_all_methods(data, config, run, het_key)
 
-        # Low Heterogeneity
-        print(f"Run {run+1}/{n_runs} - Low Heterogeneity")
-        config.kernel_heterogeneity = 0.05
-        config.reward_heterogeneity = 0.05
-        data_low_het = generate_synthetic_data(config)
-        errors_ind_low[run] = run_independent_learning(data_low_het, config)
-        errors_fedavg_low[run] = run_federated_averaging(data_low_het, config)
-        errors_pcl_low[run] = run_personalized_collaborative(data_low_het, config)
-
-        # Medium Heterogeneity
-        print(f"Run {run+1}/{n_runs} - Medium Heterogeneity")
-        config.kernel_heterogeneity = 0.2
-        config.reward_heterogeneity = 0.2
-        data_medium_het = generate_synthetic_data(config)
-        errors_ind_medium[run] = run_independent_learning(data_medium_het, config)
-        errors_fedavg_medium[run] = run_federated_averaging(data_medium_het, config)
-        errors_pcl_medium[run] = run_personalized_collaborative(data_medium_het, config)
-
-        # High Heterogeneity
-        print(f"Run {run+1}/{n_runs} - High Heterogeneity")
-        config.kernel_heterogeneity = 0.6
-        config.reward_heterogeneity = 0.6
-        data_high_het = generate_synthetic_data(config)
-        errors_ind_high[run] = run_independent_learning(data_high_het, config)
-        errors_fedavg_high[run] = run_federated_averaging(data_high_het, config)
-        errors_pcl_high[run] = run_personalized_collaborative(data_high_het, config)
-
-    
     # Compute mean and std
     results = {
-        'homogeneous': {
-            'ind': (errors_ind_homogeneous.mean(axis=0), errors_ind_homogeneous.std(axis=0)),
-            'fedavg': (errors_fedavg_homogeneous.mean(axis=0), errors_fedavg_homogeneous.std(axis=0)),
-            'pcl': (errors_pcl_homogeneous.mean(axis=0), errors_pcl_homogeneous.std(axis=0)),
-        },
-        'low': {
-            'ind': (errors_ind_low.mean(axis=0), errors_ind_low.std(axis=0)),
-            'fedavg': (errors_fedavg_low.mean(axis=0), errors_fedavg_low.std(axis=0)),
-            'pcl': (errors_pcl_low.mean(axis=0), errors_pcl_low.std(axis=0)),
-        },
-        'medium': {
-            'ind': (errors_ind_medium.mean(axis=0), errors_ind_medium.std(axis=0)),
-            'fedavg': (errors_fedavg_medium.mean(axis=0), errors_fedavg_medium.std(axis=0)),
-            'pcl': (errors_pcl_medium.mean(axis=0), errors_pcl_medium.std(axis=0)),
-        },
-        'high': {
-            'ind': (errors_ind_high.mean(axis=0), errors_ind_high.std(axis=0)),
-            'fedavg': (errors_fedavg_high.mean(axis=0), errors_fedavg_high.std(axis=0)),
-            'pcl': (errors_pcl_high.mean(axis=0), errors_pcl_high.std(axis=0)),
+        het: {
+            method: (
+                errors[het][method].mean(axis=0),
+                errors[het][method].std(axis=0)
+            )
+            for method in methods
         }
+        for het in heterogeneity_settings
     }
     return results
 
