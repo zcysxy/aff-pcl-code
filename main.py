@@ -272,7 +272,7 @@ def run_experiments_with_repeats(config):
 
 # %%
 
-# Main Execution and Variance Plotting ---
+# Main Execution and Variance Plotting
 config = Config()
 
 # Run
@@ -321,3 +321,4 @@ handles, labels = axs[0].get_legend_handles_labels()
 fig.legend(handles, labels, loc='lower center', ncol=3, fontsize=14, frameon=False)
 plt.tight_layout(rect=[0, 0.03, 1, 0.94])
 plt.show()
+fig.savefig("fig/test.png", dpi=300)
