@@ -15,9 +15,9 @@ class Config:
     n_iterations = 50
     learning_rate = 0.01
     kernel_base_scale = 6
-    kernel_heterogeneity = 0.5
+    kernel_heterogeneity = 0.1
     # Controls the spread of true reward vectors (theta_star_i)
-    reward_heterogeneity = 0.5
+    reward_heterogeneity = 0.1
     # Standard deviation for stochastic noise in A(s) and b(s)
     heterogeneity_settings = {
         'homogeneous': (0.0, 0.0),
@@ -26,6 +26,7 @@ class Config:
         'high': (0.5, 0.5),
     }
     noise_std_A = 1
+    noise_std_A_list = [0.0, 0.5, 1.0, 2.0]
     noise_std_Phi = 0.5
     n_runs = 5
     backup_dir = "bkup"
@@ -232,7 +233,54 @@ def run_personalized_collaborative(data: dict, config: Config):
     return errors
 
 # %%
-# Wrapper
+# Wrapper for experiments with varying noise_std_A and fixed heterogeneity
+def run_experiments_with_noise(config):
+    n_runs = config.n_runs
+    n_iter = config.n_iterations
+    methods = {
+        'ind': run_independent_learning,
+        'fedavg': run_federated_averaging,
+        'pcl': run_personalized_collaborative,
+        'pcl_i': run_personalized_collaborative,
+    }
+    noise_std_A_list = config.noise_std_A_list
+
+    # Results: noise -> method -> (mean, std)
+    results = {}
+    for noise_std_A in noise_std_A_list:
+        print(f"\n=== Running for noise_std_A={noise_std_A}")
+        config.noise_std_A = noise_std_A
+        # Regularize learning rate by exp(-noise/2)
+        # config.learning_rate = 0.01 * np.exp(-noise_std_A)
+        errors = {method: np.zeros((n_runs, n_iter)) for method in methods}
+
+        def run_all_methods(data, config, run_idx):
+            for method_key, method_func in methods.items():
+                if method_key == 'pcl':
+                    _temp_pcl = method_func(data, config)
+                    errors[method_key][run_idx] = np.mean(_temp_pcl, axis=1)
+                elif method_key == 'pcl_i':
+                    errors[method_key][run_idx] = _temp_pcl[:,0]
+                else:
+                    errors[method_key][run_idx] = method_func(data, config)
+
+        for run in range(n_runs):
+            print(f"Run {run+1}/{n_runs}")
+            data = generate_synthetic_data(config)
+            run_all_methods(data, config, run)
+
+        # Compute mean and std
+        results[noise_std_A] = {
+            method: (
+                errors[method].mean(axis=0),
+                errors[method].std(axis=0)
+            )
+            for method in methods
+        }
+    return results
+
+# %%
+# Wrapper for experiments with multiple repeats and heterogeneity settings
 def run_experiments_with_repeats(config):
     n_runs = config.n_runs
     n_iter = config.n_iterations
@@ -282,14 +330,13 @@ def run_experiments_with_repeats(config):
     }
     return results
 
-
 # %%
 
 # Main Execution and Variance Plotting
 config = Config()
 
 # Run
-# results = run_experiments_with_repeats(config)
+results = run_experiments_with_noise(config)
 
 # Load
 # backup_files = [f for f in os.listdir(config.backup_dir) if f.endswith(".pkl")]
@@ -324,10 +371,18 @@ def plot_results_on_axis(ax, results_dict, config, title):
 
 fig, axs = plt.subplots(1, 4, figsize=(12, 4))
 
-plot_results_on_axis(axs[0], results['homogeneous'], config, 'Homogeneous')
-plot_results_on_axis(axs[1], results['low'], config, 'Low Heterogeneity')
-plot_results_on_axis(axs[2], results['medium'], config, 'Medium Heterogeneity')
-plot_results_on_axis(axs[3], results['high'], config, 'High Heterogeneity')
+# plot_results_on_axis(axs[0], results['homogeneous'], config, 'Homogeneous')
+# plot_results_on_axis(axs[1], results['low'], config, 'Low Heterogeneity')
+# plot_results_on_axis(axs[2], results['medium'], config, 'Medium Heterogeneity')
+# plot_results_on_axis(axs[3], results['high'], config, 'High Heterogeneity')
+# results_dict = {'low': 'Low Heterogeneity', 'medium': 'Medium Heterogeneity', 'high': 'High Heterogeneity'}
+# Noise levels
+results_dict = {}
+# results_dict = {0.0: 'No Noise', 0.5: 'Low Noise', 1.0: 'Medium Noise', 5.0: 'High Noise'}
+for noise in config.noise_std_A_list:
+    results_dict[noise] = f'Noise std: {noise}'
+for i, (key, label) in enumerate(results_dict.items()):
+    plot_results_on_axis( axs[i], results[key], config, label)
 
 # fig.suptitle('Comparison of Learning Algorithms under Different Heterogeneity Levels', fontsize=18)
 fig.supxlabel('# Samples', fontsize=14, y=0.12)
