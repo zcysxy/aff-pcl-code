@@ -29,7 +29,6 @@ class Config:
     noise_std_Phi = 0.5
     n_runs = 5
     backup_dir = "bkup"
-    backup_files = [f for f in os.listdir(backup_dir) if f.endswith(".pkl")]
 
 # %%
 # Data Generation for Heterogeneous Systems
@@ -290,11 +289,12 @@ def run_experiments_with_repeats(config):
 config = Config()
 
 # Run
-results = run_experiments_with_repeats(config)
+# results = run_experiments_with_repeats(config)
 
 # Load
+# backup_files = [f for f in os.listdir(config.backup_dir) if f.endswith(".pkl")]
 # latest_file = max(backup_files, key=lambda x: x.split(".")[0])
-# with open(os.path.join(backup_dir, latest_file), "rb") as f:
+# with open(os.path.join(config.backup_dir, latest_file), "rb") as f:
 #     results = pickle.load(f)
 
 # Save
@@ -309,7 +309,7 @@ def plot_results_on_axis(ax, results_dict, config, title):
     x = np.arange(config.n_iterations)
     for key, label, marker, color in [
         ('ind', 'Independent', 'o', 'C0'),
-        ('fedavg', 'Federatedg', '^', 'C1'),  # triangle marker
+        ('fedavg', 'Federated', '^', 'C1'),  # triangle marker
         ('pcl', 'Personalized', 'D', 'C2'),
         ('pcl_i', 'Agent-Specific', 's', 'C3'),  # Changed marker to square ('s') for matplotlib
         ]:
