@@ -44,9 +44,12 @@ def generate_synthetic_data(config: Config):
     # Multivariate distribution (feature space)
     # Each agent's data distribution is a Gaussian with a different mean.
     means = []
-    for _ in range(config.n_agents):
+    for i in range(config.n_agents):
         rand_vec = np.random.randn(config.dim)
         normed_vec = rand_vec / np.linalg.norm(rand_vec)
+        # Center the first agent
+        if i == 0:
+            normed_vec = np.zeros(config.dim)
         mean = config.kernel_heterogeneity * config.kernel_base_scale * normed_vec
         means.append(mean)
     cov = np.eye(config.dim)
@@ -81,12 +84,15 @@ def generate_synthetic_data(config: Config):
     theta_star_base = np.random.randn(config.dim)
     theta_star_base = theta_star_base / np.linalg.norm(theta_star_base)
     thetas_star = []
-    for _ in range(config.n_agents):
+    for i in range(config.n_agents):
         rand_vec = np.random.randn(config.dim)
         norm = np.linalg.norm(rand_vec)
         if norm == 0:
             norm = 1  # avoid division by zero
         rand_vec_normalized = rand_vec / norm
+        # Center the first agent
+        if i == 0:
+            rand_vec_normalized = np.zeros(config.dim)
         theta_star = theta_star_base + config.reward_heterogeneity * rand_vec_normalized
         thetas_star.append(theta_star)
 
@@ -223,7 +229,8 @@ def run_personalized_collaborative(data: dict, config: Config):
             x[i] -= config.learning_rate * g_tilde_i
             errors[t, i] = np.linalg.norm(x[i] - data['x_stars'][i])**2
 
-    return np.mean(errors, axis=1)
+    # return np.mean(errors, axis=1)
+    return errors
 
 # %%
 # Wrapper
@@ -236,6 +243,7 @@ def run_experiments_with_repeats(config):
         'ind': run_independent_learning,
         'fedavg': run_federated_averaging,
         'pcl': run_personalized_collaborative,
+        'pcl_i': run_personalized_collaborative,
     }
 
     # Initialize error arrays
@@ -246,7 +254,13 @@ def run_experiments_with_repeats(config):
 
     def run_all_methods(data, config, run_idx, het_key):
         for method_key, method_func in methods.items():
-            errors[het_key][method_key][run_idx] = method_func(data, config)
+            if method_key == 'pcl':
+                _temp_pcl = method_func(data, config)
+                errors[het_key][method_key][run_idx] = np.mean(_temp_pcl, axis=1)
+            elif method_key == 'pcl_i':
+                errors[het_key][method_key][run_idx] = _temp_pcl[:,0]
+            else:
+                errors[het_key][method_key][run_idx] = method_func(data, config)
 
     for run in range(n_runs):
         for het_key, (kernel_het, reward_het) in heterogeneity_settings.items():
@@ -294,12 +308,13 @@ results = run_experiments_with_repeats(config)
 def plot_results_on_axis(ax, results_dict, config, title):
     x = np.arange(config.n_iterations)
     for key, label, marker, color in [
-        ('ind', 'Independent Learning', 'o', 'C0'),
-        ('fedavg', 'Federated Averaging', '^', 'C1'),  # triangle marker
-        ('pcl', 'Personalized Collaborative', 'D', 'C2'),
+        ('ind', 'Independent', 'o', 'C0'),
+        ('fedavg', 'Federatedg', '^', 'C1'),  # triangle marker
+        ('pcl', 'Personalized', 'D', 'C2'),
+        ('pcl_i', 'Agent-Specific', 's', 'C3'),  # Changed marker to square ('s') for matplotlib
         ]:
         mean, std = results_dict[key]
-        ax.plot(x, mean, label=label, marker=marker, color=color, markevery=10, markersize=8)
+        ax.plot(x, mean, label=label, marker=marker, color=color, markevery=10, markersize=7, markerfacecolor='none')
         ax.fill_between(x, mean-1.64*std/np.sqrt(config.n_runs), mean+1.64*std/np.sqrt(config.n_runs), color=color, alpha=0.2)
     ax.set_title(title, fontsize=14)
     ax.set_yscale('log')
@@ -318,7 +333,7 @@ plot_results_on_axis(axs[3], results['high'], config, 'High Heterogeneity')
 fig.supxlabel('# Samples', fontsize=14, y=0.12)
 fig.supylabel('Mean Squared Error', fontsize=14)
 handles, labels = axs[0].get_legend_handles_labels()
-fig.legend(handles, labels, loc='lower center', ncol=3, fontsize=14, frameon=False)
+fig.legend(handles, labels, loc='lower center', ncol=len(results), fontsize=14, frameon=False)
 plt.tight_layout(rect=[0, 0.03, 1, 0.94])
 plt.show()
-fig.savefig("fig/test.png", dpi=300)
+# fig.savefig("fig/test.png", dpi=300)
