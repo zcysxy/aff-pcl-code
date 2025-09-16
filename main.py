@@ -16,15 +16,21 @@ class Config:
     learning_rate = 0.01
     kernel_base_scale = 6
     kernel_heterogeneity = 0.1
-    # Controls the spread of true reward vectors (theta_star_i)
     reward_heterogeneity = 0.1
-    # Standard deviation for stochastic noise in A(s) and b(s)
-    heterogeneity_settings = {
-        'homogeneous': (0.0, 0.0),
-        'low': (0.05, 0.05),
-        'medium': (0.2, 0.2),
-        'high': (0.5, 0.5),
-    }
+    # Basic
+    # heterogeneity_settings = {
+    #     'homogeneous': (0.0, 0.0),
+    #     'low': (0.05, 0.05),
+    #     'medium': (0.2, 0.2),
+    #     'high': (0.5, 0.5),
+    # }
+    # Exhaustive
+    heterogeneity_settings = {}
+    for kernel_het in np.linspace(0, 1, 11):
+        for reward_het in np.linspace(0, 1, 11):
+            key = f'({kernel_het},{reward_het})'
+            heterogeneity_settings[key] = (kernel_het, reward_het)
+
     noise_std_A = 1
     noise_std_A_list = [0.0, 0.5, 1.0, 2.0]
     noise_std_Phi = 0.5
@@ -336,7 +342,8 @@ def run_experiments_with_repeats(config):
 config = Config()
 
 # Run
-results = run_experiments_with_noise(config)
+# results = run_experiments_with_noise(config)
+results = run_experiments_with_repeats(config)
 
 # Load
 # backup_files = [f for f in os.listdir(config.backup_dir) if f.endswith(".pkl")]
@@ -369,7 +376,9 @@ def plot_results_on_axis(ax, results_dict, config, title):
     ax.set_aspect(1./ax.get_data_ratio())
     # ax.grid(True, which="both", ls="--", alpha=0.6)  # grid removed
 
-fig, axs = plt.subplots(1, 4, figsize=(12, 4))
+# fig, axs = plt.subplots(1, 4, figsize=(12, 4))
+# number of rows is number of results divided by 4, rounded up
+fig, axs = plt.subplots(len(results) // 4 + (len(results) % 4 > 0), 4, figsize=(12, 4 * (len(results) // 4 + (len(results) % 4 > 0))))
 
 # plot_results_on_axis(axs[0], results['homogeneous'], config, 'Homogeneous')
 # plot_results_on_axis(axs[1], results['low'], config, 'Low Heterogeneity')
@@ -379,15 +388,19 @@ fig, axs = plt.subplots(1, 4, figsize=(12, 4))
 # Noise levels
 results_dict = {}
 # results_dict = {0.0: 'No Noise', 0.5: 'Low Noise', 1.0: 'Medium Noise', 5.0: 'High Noise'}
-for noise in config.noise_std_A_list:
-    results_dict[noise] = f'Noise std: {noise}'
+# for noise in config.noise_std_A_list:
+#     results_dict[noise] = f'Noise std: {noise}'
+for het_key in results.keys():
+    kernel_het, reward_het = config.heterogeneity_settings[het_key]
+    results_dict[het_key] = f'({round(kernel_het, 1)}, {round(reward_het, 1)})'
+
 for i, (key, label) in enumerate(results_dict.items()):
-    plot_results_on_axis( axs[i], results[key], config, label)
+    plot_results_on_axis( axs[i//4, i%4], results[key], config, label)
 
 # fig.suptitle('Comparison of Learning Algorithms under Different Heterogeneity Levels', fontsize=18)
 fig.supxlabel('# Samples', fontsize=14, y=0.12)
 fig.supylabel('Mean Squared Error', fontsize=14)
-handles, labels = axs[0].get_legend_handles_labels()
+handles, labels = axs[0,0].get_legend_handles_labels()
 fig.legend(handles, labels, loc='lower center', ncol=len(results), fontsize=14, frameon=False)
 plt.tight_layout(rect=[0, 0.03, 1, 0.94])
 plt.show()
