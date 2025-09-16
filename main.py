@@ -2,26 +2,31 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.stats import multivariate_normal
+import pickle
+import datetime
+import os
 
 # %%
-# --- 1. Configuration ---
+# Configuration
 class Config:
     """Stores all parameters for the numerical experiment."""
     n_agents = 20
     dim = 5
     n_iterations = 50
     learning_rate = 0.01
+    kernel_base_scale = 6
     kernel_heterogeneity = 0.5
     # Controls the spread of true reward vectors (theta_star_i)
     reward_heterogeneity = 0.5
     # Standard deviation for stochastic noise in A(s) and b(s)
-    noise_std = 1
-    n_runs = 20
+    noise_std_A = 0.5
+    noise_std_Phi = 0.5
+    n_runs = 3
+    backup_dir = "bkup"
+    backup_files = [f for f in os.listdir(backup_dir) if f.endswith(".pkl")]
 
 # %%
-
-# %%
-# --- 2. Data Generation for Heterogeneous Systems ---
+# Data Generation for Heterogeneous Systems
 def generate_synthetic_data(config: Config):
     """
     Generates synthetic data for a multi-agent heterogeneous linear system
@@ -29,39 +34,56 @@ def generate_synthetic_data(config: Config):
     """
     print("Generating synthetic data...")
 
-    # --- Create heterogeneous covariate distributions (mu_i) ---
+    # Create heterogeneous environment distributions (mu^i)
+    # Multivariate distribution (feature space)
     # Each agent's data distribution is a Gaussian with a different mean.
-    means = [
-        config.kernel_heterogeneity * np.random.randn(config.dim) # around zero
-        for _ in range(config.n_agents)
-    ]
+    means = []
+    for _ in range(config.n_agents):
+        rand_vec = np.random.randn(config.dim)
+        normed_vec = rand_vec / np.linalg.norm(rand_vec)
+        mean = config.kernel_heterogeneity * config.kernel_base_scale * normed_vec
+        means.append(mean)
     cov = np.eye(config.dim)
     distributions = [multivariate_normal(mean=m, cov=cov) for m in means]
 
-    # --- Define shared stochastic feature A(s) and reward feature map Phi ---
+    # Define shared feature embedding A(s) and Phi(s)
+    # We use multiplicative noise
     # A_bar_base is a shared, underlying positive definite matrix.
     _temp_A = np.random.rand(config.dim, config.dim)
-    A_bar_base = _temp_A.T @ _temp_A + config.dim * np.eye(config.dim)
+    A_bar_base = _temp_A.T @ _temp_A + config.dim * np.eye(config.dim) # nice conditioning
 
-    # For simplicity, Phi is a fixed matrix, not dependent on the sample s.
-    Phi = np.random.randn(config.dim, config.dim)
-    Phi = Phi.T @ Phi
+    _temp_Phi = np.random.randn(config.dim, config.dim)
+    Phi = _temp_Phi.T @ _temp_Phi + config.dim * np.eye(config.dim) # nice conditioning
+    Phi_bar_base = _temp_Phi.T @ _temp_Phi + config.dim * np.eye(config.dim) # nice conditioning
+
 
     def A_func(s):
         # The stochastic feature matrix A(s) depends on the sample s.
         # This ensures that E_{s~mu_i}[A(s)] is different for each agent.
-        return (config.noise_std * np.outer(s, s) + np.eye(config.dim)) @ A_bar_base
+        return (config.noise_std_A * np.outer(s, s) + np.eye(config.dim)) @ A_bar_base
+
+    def Phi_func(s):
+        # The stochastic feature matrix Phi(s) depends on the sample s.
+        # This ensures that E_{s~mu_i}[Phi(s)] is different for each agent.
+        return (config.noise_std_Phi * np.outer(s, s) + np.eye(config.dim)) @ Phi_bar_base
 
     def b_func(s, theta_star):
         # The stochastic label b^i(s) follows a linear structure.
-        return Phi @ theta_star # + config.noise_std * np.random.randn(config.dim)
+        return Phi @ theta_star
+        # return Phi_func(s) @ theta_star
 
     # --- Create heterogeneous true reward parameters (theta_star_i) ---
     theta_star_base = np.random.randn(config.dim)
-    thetas_star = [
-        theta_star_base + config.reward_heterogeneity * np.random.randn(config.dim)
-        for _ in range(config.n_agents)
-    ]
+    theta_star_base = theta_star_base / np.linalg.norm(theta_star_base)
+    thetas_star = []
+    for _ in range(config.n_agents):
+        rand_vec = np.random.randn(config.dim)
+        norm = np.linalg.norm(rand_vec)
+        if norm == 0:
+            norm = 1  # avoid division by zero
+        rand_vec_normalized = rand_vec / norm
+        theta_star = theta_star_base + config.reward_heterogeneity * rand_vec_normalized
+        thetas_star.append(theta_star)
 
     # --- Calculate ground truth solutions x_star_i via Monte Carlo ---
     # The true solution x_star_i = inv(A_bar_i) @ b_bar_i, where the bars
@@ -231,8 +253,8 @@ def run_experiments_with_repeats(config):
 
         # Low Heterogeneity
         print(f"Run {run+1}/{n_runs} - Low Heterogeneity")
-        config.kernel_heterogeneity = 0.2
-        config.reward_heterogeneity = 0.2
+        config.kernel_heterogeneity = 0.1
+        config.reward_heterogeneity = 0.1
         data_low_het = generate_synthetic_data(config)
         errors_ind_low[run] = run_independent_learning(data_low_het, config)
         errors_fedavg_low[run] = run_federated_averaging(data_low_het, config)
@@ -240,8 +262,8 @@ def run_experiments_with_repeats(config):
 
         # Medium Heterogeneity
         print(f"Run {run+1}/{n_runs} - Medium Heterogeneity")
-        config.kernel_heterogeneity = 0.6
-        config.reward_heterogeneity = 0.6
+        config.kernel_heterogeneity = 0.2
+        config.reward_heterogeneity = 0.2
         data_medium_het = generate_synthetic_data(config)
         errors_ind_medium[run] = run_independent_learning(data_medium_het, config)
         errors_fedavg_medium[run] = run_federated_averaging(data_medium_het, config)
@@ -249,8 +271,8 @@ def run_experiments_with_repeats(config):
 
         # High Heterogeneity
         print(f"Run {run+1}/{n_runs} - High Heterogeneity")
-        config.kernel_heterogeneity = 1
-        config.reward_heterogeneity = 1
+        config.kernel_heterogeneity = 0.5
+        config.reward_heterogeneity = 0.5
         data_high_het = generate_synthetic_data(config)
         errors_ind_high[run] = run_independent_learning(data_high_het, config)
         errors_fedavg_high[run] = run_federated_averaging(data_high_het, config)
@@ -288,20 +310,18 @@ def run_experiments_with_repeats(config):
 # Main Execution and Variance Plotting ---
 config = Config()
 
-# results = run_experiments_with_repeats(config)
+# Run
+results = run_experiments_with_repeats(config)
 
-import pickle
-import datetime
-import os
-backup_dir = "bkup"
-backup_files = [f for f in os.listdir(backup_dir) if f.endswith(".pkl")]
-latest_file = max(backup_files, key=lambda x: x.split(".")[0])
-with open(os.path.join(backup_dir, latest_file), "rb") as f:
-    results = pickle.load(f)
+# Load
+# latest_file = max(backup_files, key=lambda x: x.split(".")[0])
+# with open(os.path.join(backup_dir, latest_file), "rb") as f:
+#     results = pickle.load(f)
 
-timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-with open(f"bkup/{timestamp}.pkl", "wb") as f:
-    pickle.dump(results, f)
+# Save
+# timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+# with open(f"bkup/{timestamp}.pkl", "wb") as f:
+#     pickle.dump(results, f)
 
 
 # %%
