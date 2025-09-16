@@ -116,16 +116,11 @@ def generate_synthetic_data(config: Config):
     print("Data generation complete.")
     return data
 
-# %% [markdown]
-"""
---- 3. Algorithms ---
-"""
-
-
 # %%
+## Algorithms
 def run_independent_learning(data: dict, config: Config):
     """Baseline 1: Each agent learns entirely on its own."""
-    print("Running Independent Learning...")
+    print("Running IL...")
     x = [np.zeros(config.dim) for _ in range(config.n_agents)]
     errors = np.zeros((config.n_iterations, config.n_agents))
 
@@ -142,7 +137,7 @@ def run_independent_learning(data: dict, config: Config):
 # %%
 def run_federated_averaging(data: dict, config: Config):
     """Baseline 2: All agents learn a single, unified model."""
-    print("Running Federated Averaging...")
+    print("Running FL...")
     x_0 = np.zeros(config.dim)  # Single central model
     errors = np.zeros((config.n_iterations, config.n_agents))
 
@@ -156,7 +151,7 @@ def run_federated_averaging(data: dict, config: Config):
         
         x_0 -= config.learning_rate * (grad_agg / config.n_agents)
         
-        # Measure error of the single model against each agent's personal optimum
+        #NOTE: Measure error of the single model against each agent's personal optimum
         for i in range(config.n_agents):
             errors[t, i] = np.linalg.norm(x_0 - data['x_stars'][i])**2
             
@@ -164,8 +159,8 @@ def run_federated_averaging(data: dict, config: Config):
 
 # %%
 def run_personalized_collaborative(data: dict, config: Config):
-    """Proposed Method: Personalized Collaborative Learning with affinity-based variance reduction."""
-    print("Running Personalized Collaborative Learning...")
+    """Proposed Method: Personalized Collaborative Learning."""
+    print("Running PCL...")
     # Personalized models for each agent
     x = [np.zeros(config.dim) for _ in range(config.n_agents)]
     # Central variables maintained on the server
@@ -177,23 +172,27 @@ def run_personalized_collaborative(data: dict, config: Config):
         # In each step, every agent draws a fresh sample
         samples = [dist.rvs() for dist in data['distributions']]
 
-        # --- Server-side: Update central reward (theta_c) and central model (x_c) ---
+        # Central learning: Update central reward (theta_c) and central decision variable (x_c)
         grad_agg_b = np.zeros(config.dim)
         grad_agg_c = np.zeros(config.dim)
         
-        b_hat_c_t = lambda s: data['Phi_func'](s) @ theta_c # Learned central reward at step t
-
         for j in range(config.n_agents):
             s_t_j = samples[j]
             # Gradient for central reward learning
             grad_agg_b += data['Phi_func'](s_t_j) @ theta_c - data['b_func'](s_t_j, data['thetas_star'][j])
             # Gradient for central model learning
-            grad_agg_c += data['A_func'](s_t_j) @ x_c - b_hat_c_t(s_t_j)
+            # NOTE: use learned reward
+            # grad_agg_c += data['A_func'](s_t_j) @ x_c - data['b_func'](s_t_j, theta_c)
+            grad_agg_c += data['A_func'](s_t_j) @ x_c - data['b_func'](s_t_j, data['thetas_star'][j]) 
         
+        theta_c_temp = theta_c.copy()
+        b_hat_c_t = lambda s: data['Phi_func'](s) @ theta_c_temp # Learned central reward at step t
         theta_c -= config.learning_rate * (grad_agg_b / config.n_agents)
+
+        x_c_temp = x_c.copy()
         x_c -= config.learning_rate * (grad_agg_c / config.n_agents)
 
-        # --- Client-side: Update personalized models x_i ---
+        # Local learning: Update personalized models x_i
         for i in range(config.n_agents):
             s_t_i = samples[i]
             
@@ -204,13 +203,13 @@ def run_personalized_collaborative(data: dict, config: Config):
             g_rho_corr = np.zeros(config.dim)
             for j in range(config.n_agents):
                 s_t_j = samples[j]
-                g_c_arrow_j = data['A_func'](s_t_j) @ x_c - b_hat_c_t(s_t_j)
+                g_c_arrow_j = data['A_func'](s_t_j) @ x_c_temp - b_hat_c_t(s_t_j)
                 rho_i_j = data['rho_func'](s_t_j, i)
                 g_rho_corr += rho_i_j * g_c_arrow_j
             g_rho_corr /= config.n_agents
             
             # 3. Bias correction term: g_t^{c->i}(x_t^c)
-            g_bias_corr = data['A_func'](s_t_i) @ x_c - b_hat_c_t(s_t_i)
+            g_bias_corr = data['A_func'](s_t_i) @ x_c_temp - b_hat_c_t(s_t_i)
             
             # Full personalized update direction (Eq. 6 from the paper)
             g_tilde_i = g_t_i + g_rho_corr - g_bias_corr
@@ -221,7 +220,7 @@ def run_personalized_collaborative(data: dict, config: Config):
     return np.mean(errors, axis=1)
 
 # %%
-# --- Wrapper for Multiple Runs and Variance Plotting ---
+# Wrapper
 def run_experiments_with_repeats(config):
     n_runs = config.n_runs
     n_iter = config.n_iterations
