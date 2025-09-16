@@ -10,13 +10,18 @@ import os
 # Configuration
 class Config:
     """Stores all parameters for the numerical experiment."""
-    n_agents = 20
-    dim = 5
-    n_iterations = 50
-    learning_rate = 0.01
-    kernel_base_scale = 6
-    kernel_heterogeneity = 0.1
-    reward_heterogeneity = 0.1
+    backup_dir = "bkup"
+    runs = 10
+    n = 20
+    d = 5
+    t = 80
+    alpha = 0.01
+    base_scale_a = 4
+    delta_a = 0.1
+    delta_b = 0.1
+    noise_b = 0.5
+    noise_a = 1
+    noise_a_list = [0.0, 0.5, 1.0, 2.0]
     # Basic
     # heterogeneity_settings = {
     #     'homogeneous': (0.0, 0.0),
@@ -26,16 +31,10 @@ class Config:
     # }
     # Exhaustive
     heterogeneity_settings = {}
-    for kernel_het in np.linspace(0, 1, 11):
-        for reward_het in np.linspace(0, 1, 11):
+    for kernel_het in np.linspace(0.0, 0.9, 10):
+        for reward_het in np.linspace(0.0, 0.9, 10):
             key = f'({kernel_het},{reward_het})'
             heterogeneity_settings[key] = (kernel_het, reward_het)
-
-    noise_std_A = 1
-    noise_std_A_list = [0.0, 0.5, 1.0, 2.0]
-    noise_std_Phi = 0.5
-    n_runs = 5
-    backup_dir = "bkup"
 
 # %%
 # Data Generation for Heterogeneous Systems
@@ -50,36 +49,36 @@ def generate_synthetic_data(config: Config):
     # Multivariate distribution (feature space)
     # Each agent's data distribution is a Gaussian with a different mean.
     means = []
-    for i in range(config.n_agents):
-        rand_vec = np.random.randn(config.dim)
+    for i in range(config.n):
+        rand_vec = np.random.randn(config.d)
         normed_vec = rand_vec / np.linalg.norm(rand_vec)
         # Center the first agent
         if i == 0:
-            normed_vec = np.zeros(config.dim)
-        mean = config.kernel_heterogeneity * config.kernel_base_scale * normed_vec
+            normed_vec = np.zeros(config.d)
+        mean = config.delta_a * config.base_scale_a * normed_vec
         means.append(mean)
-    cov = np.eye(config.dim)
+    cov = np.eye(config.d)
     distributions = [multivariate_normal(mean=m, cov=cov) for m in means]
 
     # Define shared feature embedding A(s) and Phi(s)
     # We use multiplicative noise
     # A_bar_base is a shared, underlying positive definite matrix.
-    _temp_A = np.random.rand(config.dim, config.dim)
-    A_bar_base = _temp_A.T @ _temp_A + config.dim * np.eye(config.dim) # nice conditioning
+    _temp_A = np.random.rand(config.d, config.d)
+    A_bar_base = _temp_A.T @ _temp_A + config.d * np.eye(config.d) # nice conditioning
 
-    _temp_Phi = np.random.randn(config.dim, config.dim)
-    Phi_bar_base = _temp_Phi.T @ _temp_Phi + config.dim * np.eye(config.dim) # nice conditioning
+    _temp_Phi = np.random.randn(config.d, config.d)
+    Phi_bar_base = _temp_Phi.T @ _temp_Phi + config.d * np.eye(config.d) # nice conditioning
 
 
     def A_func(s):
         # The stochastic feature matrix A(s) depends on the sample s.
         # This ensures that E_{s~mu_i}[A(s)] is different for each agent.
-        return (config.noise_std_A * np.outer(s, s) + np.eye(config.dim)) @ A_bar_base
+        return (config.noise_a * np.outer(s, s) + np.eye(config.d)) @ A_bar_base
 
     def Phi_func(s):
         # The stochastic feature matrix Phi(s) depends on the sample s.
         # This ensures that E_{s~mu_i}[Phi(s)] is different for each agent.
-        return (config.noise_std_Phi * np.outer(s, s) + np.eye(config.dim)) @ Phi_bar_base
+        return (config.noise_b * np.outer(s, s) + np.eye(config.d)) @ Phi_bar_base
 
     def b_func(s, theta_star):
         # The stochastic label b^i(s) follows a linear structure.
@@ -87,19 +86,19 @@ def generate_synthetic_data(config: Config):
         return Phi_func(s) @ theta_star
 
     # Create heterogeneous true reward parameters (theta_star_i)
-    theta_star_base = np.random.randn(config.dim)
+    theta_star_base = np.random.randn(config.d)
     theta_star_base = theta_star_base / np.linalg.norm(theta_star_base)
     thetas_star = []
-    for i in range(config.n_agents):
-        rand_vec = np.random.randn(config.dim)
+    for i in range(config.n):
+        rand_vec = np.random.randn(config.d)
         norm = np.linalg.norm(rand_vec)
         if norm == 0:
             norm = 1  # avoid division by zero
         rand_vec_normalized = rand_vec / norm
         # Center the first agent
         if i == 0:
-            rand_vec_normalized = np.zeros(config.dim)
-        theta_star = theta_star_base + config.reward_heterogeneity * rand_vec_normalized
+            rand_vec_normalized = np.zeros(config.d)
+        theta_star = theta_star_base + config.delta_b * rand_vec_normalized
         thetas_star.append(theta_star)
 
     # Calculate ground truth solutions x_star_i via Monte Carlo
@@ -108,7 +107,7 @@ def generate_synthetic_data(config: Config):
     print("Calculating ground truth solutions via Monte Carlo...")
     n_samples_mc = 5000
     x_stars = []
-    for i in range(config.n_agents):
+    for i in range(config.n):
         samples = distributions[i].rvs(size=n_samples_mc)
         A_bar_i = np.mean([A_func(s) for s in samples], axis=0)
         b_bar_i = np.mean([b_func(s,thetas_star[i]) for s in samples], axis=0)
@@ -139,15 +138,15 @@ def generate_synthetic_data(config: Config):
 def run_independent_learning(data: dict, config: Config):
     """Baseline 1: Each agent learns entirely on its own."""
     print("Running IL...")
-    x = [np.zeros(config.dim) for _ in range(config.n_agents)]
-    errors = np.zeros((config.n_iterations, config.n_agents))
+    x = [np.zeros(config.d) for _ in range(config.n)]
+    errors = np.zeros((config.t, config.n))
 
-    for t in range(config.n_iterations):
-        for i in range(config.n_agents):
+    for t in range(config.t):
+        for i in range(config.n):
             s_t_i = data['distributions'][i].rvs()
             # Local gradient: g_t^i(x_t^i) = A(s_t^i)x_t^i - b^i(s_t^i)
             g_t_i = data['A_func'](s_t_i) @ x[i] - data['b_func'](s_t_i, data['thetas_star'][i])
-            x[i] -= config.learning_rate * g_t_i
+            x[i] -= config.alpha * g_t_i
             errors[t, i] = np.linalg.norm(x[i] - data['x_stars'][i])**2
             
     return np.mean(errors, axis=1)
@@ -156,21 +155,21 @@ def run_independent_learning(data: dict, config: Config):
 def run_federated_averaging(data: dict, config: Config):
     """Baseline 2: All agents learn a single, unified model."""
     print("Running FL...")
-    x_0 = np.zeros(config.dim)  # Single central model
-    errors = np.zeros((config.n_iterations, config.n_agents))
+    x_0 = np.zeros(config.d)  # Single central model
+    errors = np.zeros((config.t, config.n))
 
-    for t in range(config.n_iterations):
-        grad_agg = np.zeros(config.dim)
-        for i in range(config.n_agents):
+    for t in range(config.t):
+        grad_agg = np.zeros(config.d)
+        for i in range(config.n):
             s_t_i = data['distributions'][i].rvs()
             # Each agent computes a gradient at the central model x_0
             g_t_i = data['A_func'](s_t_i) @ x_0 - data['b_func'](s_t_i, data['thetas_star'][i])
             grad_agg += g_t_i
         
-        x_0 -= config.learning_rate * (grad_agg / config.n_agents)
+        x_0 -= config.alpha * (grad_agg / config.n)
         
         #NOTE: Measure error of the single model against each agent's personal optimum
-        for i in range(config.n_agents):
+        for i in range(config.n):
             errors[t, i] = np.linalg.norm(x_0 - data['x_stars'][i])**2
             
     return np.mean(errors, axis=1)
@@ -180,21 +179,21 @@ def run_personalized_collaborative(data: dict, config: Config):
     """Proposed Method: Personalized Collaborative Learning."""
     print("Running PCL...")
     # Personalized models for each agent
-    x = [np.zeros(config.dim) for _ in range(config.n_agents)]
+    x = [np.zeros(config.d) for _ in range(config.n)]
     # Central variables maintained on the server
-    x_c = np.zeros(config.dim)
-    theta_c = np.zeros(config.dim) # For learning the central reward
-    errors = np.zeros((config.n_iterations, config.n_agents))
+    x_c = np.zeros(config.d)
+    theta_c = np.zeros(config.d) # For learning the central reward
+    errors = np.zeros((config.t, config.n))
 
-    for t in range(config.n_iterations):
+    for t in range(config.t):
         # In each step, every agent draws a fresh sample
         samples = [dist.rvs() for dist in data['distributions']]
 
         # Central learning: Update central reward (theta_c) and central decision variable (x_c)
-        grad_agg_b = np.zeros(config.dim)
-        grad_agg_c = np.zeros(config.dim)
+        grad_agg_b = np.zeros(config.d)
+        grad_agg_c = np.zeros(config.d)
         
-        for j in range(config.n_agents):
+        for j in range(config.n):
             s_t_j = samples[j]
             # Gradient for central reward learning
             grad_agg_b += data['Phi_func'](s_t_j) @ theta_c - data['b_func'](s_t_j, data['thetas_star'][j])
@@ -205,26 +204,26 @@ def run_personalized_collaborative(data: dict, config: Config):
         
         theta_c_temp = theta_c.copy()
         b_hat_c_t = lambda s: data['Phi_func'](s) @ theta_c_temp # Learned central reward at step t
-        theta_c -= config.learning_rate * (grad_agg_b / config.n_agents)
+        theta_c -= config.alpha * (grad_agg_b / config.n)
 
         x_c_temp = x_c.copy()
-        x_c -= config.learning_rate * (grad_agg_c / config.n_agents)
+        x_c -= config.alpha * (grad_agg_c / config.n)
 
         # Local learning: Update personalized models x_i
-        for i in range(config.n_agents):
+        for i in range(config.n):
             s_t_i = samples[i]
             
             # 1. Local gradient: g_t^i(x_t^i)
             g_t_i = data['A_func'](s_t_i) @ x[i] - data['b_func'](s_t_i, data['thetas_star'][i])
             
             # 2. Importance-corrected central gradient: (rho^i circ g_t^0)(x_t^c)
-            g_rho_corr = np.zeros(config.dim)
-            for j in range(config.n_agents):
+            g_rho_corr = np.zeros(config.d)
+            for j in range(config.n):
                 s_t_j = samples[j]
                 g_c_arrow_j = data['A_func'](s_t_j) @ x_c_temp - b_hat_c_t(s_t_j)
                 rho_i_j = data['rho_func'](s_t_j, i)
                 g_rho_corr += rho_i_j * g_c_arrow_j
-            g_rho_corr /= config.n_agents
+            g_rho_corr /= config.n
             
             # 3. Bias correction term: g_t^{c->i}(x_t^c)
             g_bias_corr = data['A_func'](s_t_i) @ x_c_temp - b_hat_c_t(s_t_i)
@@ -232,33 +231,33 @@ def run_personalized_collaborative(data: dict, config: Config):
             # Full personalized update direction (Eq. 6 from the paper)
             g_tilde_i = g_t_i + g_rho_corr - g_bias_corr
             
-            x[i] -= config.learning_rate * g_tilde_i
+            x[i] -= config.alpha * g_tilde_i
             errors[t, i] = np.linalg.norm(x[i] - data['x_stars'][i])**2
 
     # return np.mean(errors, axis=1)
     return errors
 
 # %%
-# Wrapper for experiments with varying noise_std_A and fixed heterogeneity
+# Wrapper for experiments with varying noise_a and fixed heterogeneity
 def run_experiments_with_noise(config):
-    n_runs = config.n_runs
-    n_iter = config.n_iterations
+    runs = config.runs
+    n_iter = config.t
     methods = {
         'ind': run_independent_learning,
         'fedavg': run_federated_averaging,
         'pcl': run_personalized_collaborative,
         'pcl_i': run_personalized_collaborative,
     }
-    noise_std_A_list = config.noise_std_A_list
+    noise_a_list = config.noise_a_list
 
     # Results: noise -> method -> (mean, std)
     results = {}
-    for noise_std_A in noise_std_A_list:
-        print(f"\n=== Running for noise_std_A={noise_std_A}")
-        config.noise_std_A = noise_std_A
+    for noise_a in noise_a_list:
+        print(f"\n=== Running for noise_a={noise_a}")
+        config.noise_a = noise_a
         # Regularize learning rate by exp(-noise/2)
-        # config.learning_rate = 0.01 * np.exp(-noise_std_A)
-        errors = {method: np.zeros((n_runs, n_iter)) for method in methods}
+        # config.alpha = 0.01 * np.exp(-noise_a)
+        errors = {method: np.zeros((runs, n_iter)) for method in methods}
 
         def run_all_methods(data, config, run_idx):
             for method_key, method_func in methods.items():
@@ -270,13 +269,13 @@ def run_experiments_with_noise(config):
                 else:
                     errors[method_key][run_idx] = method_func(data, config)
 
-        for run in range(n_runs):
-            print(f"Run {run+1}/{n_runs}")
+        for run in range(runs):
+            print(f"Run {run+1}/{runs}")
             data = generate_synthetic_data(config)
             run_all_methods(data, config, run)
 
         # Compute mean and std
-        results[noise_std_A] = {
+        results[noise_a] = {
             method: (
                 errors[method].mean(axis=0),
                 errors[method].std(axis=0)
@@ -288,8 +287,8 @@ def run_experiments_with_noise(config):
 # %%
 # Wrapper for experiments with multiple repeats and heterogeneity settings
 def run_experiments_with_repeats(config):
-    n_runs = config.n_runs
-    n_iter = config.n_iterations
+    runs = config.runs
+    n_iter = config.t
     heterogeneity_settings = config.heterogeneity_settings
     
     methods = {
@@ -301,7 +300,7 @@ def run_experiments_with_repeats(config):
 
     # Initialize error arrays
     errors = {
-        het: {method: np.zeros((n_runs, n_iter)) for method in methods}
+        het: {method: np.zeros((runs, n_iter)) for method in methods}
         for het in heterogeneity_settings
     }
 
@@ -315,11 +314,11 @@ def run_experiments_with_repeats(config):
             else:
                 errors[het_key][method_key][run_idx] = method_func(data, config)
 
-    for run in range(n_runs):
+    for run in range(runs):
         for het_key, (kernel_het, reward_het) in heterogeneity_settings.items():
-            print(f"Run {run+1}/{n_runs} - {het_key.capitalize()} Heterogeneity")
-            config.kernel_heterogeneity = kernel_het
-            config.reward_heterogeneity = reward_het
+            print(f"Run {run+1}/{runs} - {het_key.capitalize()} Heterogeneity")
+            config.delta_a = kernel_het
+            config.delta_b = reward_het
             data = generate_synthetic_data(config)
             run_all_methods(data, config, run, het_key)
 
@@ -352,15 +351,15 @@ results = run_experiments_with_repeats(config)
 #     results = pickle.load(f)
 
 # Save
-# timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-# with open(f"bkup/{timestamp}.pkl", "wb") as f:
-#     pickle.dump(results, f)
+timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+with open(f"bkup/{timestamp}.pkl", "wb") as f:
+    pickle.dump(results, f)
 
 
 # %%
 
 def plot_results_on_axis(ax, results_dict, config, title):
-    x = np.arange(config.n_iterations)
+    x = np.arange(config.t)
     for key, label, marker, color in [
         ('ind', 'Independent', 'o', 'C0'),
         ('fedavg', 'Federated', '^', 'C1'),  # triangle marker
@@ -369,7 +368,7 @@ def plot_results_on_axis(ax, results_dict, config, title):
         ]:
         mean, std = results_dict[key]
         ax.plot(x, mean, label=label, marker=marker, color=color, markevery=10, markersize=7, markerfacecolor='none')
-        ax.fill_between(x, mean-1.64*std/np.sqrt(config.n_runs), mean+1.64*std/np.sqrt(config.n_runs), color=color, alpha=0.2)
+        ax.fill_between(x, mean-1.64*std/np.sqrt(config.runs), mean+1.64*std/np.sqrt(config.runs), color=color, alpha=0.2)
     ax.set_title(title, fontsize=14)
     ax.set_yscale('log')
     ax.tick_params(axis='both', which='both', length=0)
@@ -378,7 +377,7 @@ def plot_results_on_axis(ax, results_dict, config, title):
 
 # fig, axs = plt.subplots(1, 4, figsize=(12, 4))
 # number of rows is number of results divided by 4, rounded up
-fig, axs = plt.subplots(len(results) // 4 + (len(results) % 4 > 0), 4, figsize=(12, 4 * (len(results) // 4 + (len(results) % 4 > 0))))
+fig, axs = plt.subplots(len(results) // 4 + (len(results) % 4 > 0), 4, figsize=(12, 4 * (len(results) // 4 + (len(results) % 4 > 0))), squeeze=False)
 
 # plot_results_on_axis(axs[0], results['homogeneous'], config, 'Homogeneous')
 # plot_results_on_axis(axs[1], results['low'], config, 'Low Heterogeneity')
@@ -388,7 +387,7 @@ fig, axs = plt.subplots(len(results) // 4 + (len(results) % 4 > 0), 4, figsize=(
 # Noise levels
 results_dict = {}
 # results_dict = {0.0: 'No Noise', 0.5: 'Low Noise', 1.0: 'Medium Noise', 5.0: 'High Noise'}
-# for noise in config.noise_std_A_list:
+# for noise in config.noise_a_list:
 #     results_dict[noise] = f'Noise std: {noise}'
 for het_key in results.keys():
     kernel_het, reward_het = config.heterogeneity_settings[het_key]
