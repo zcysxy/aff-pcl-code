@@ -12,10 +12,10 @@ import os
 class Config:
     """Stores all parameters for the numerical experiment."""
     backup_dir = "bkup"
-    runs = 3
+    runs = 10
     n = 20
     d = 5
-    t = 80
+    t = 60
     alpha = 0.01
     base_scale_a = 4
     delta_a = 0.1
@@ -37,7 +37,7 @@ class Config:
     #         key = f'({kernel_het},{reward_het})'
     #         heterogeneity_settings[key] = (kernel_het, reward_het)
     # Pareto
-    n_list = 10 * np.arange(1, 5) 
+    n_list = np.array([2,3,4,5,6,7,8,10,15,20,35,50])
     delta_list = 1 / n_list
 
 # %% 
@@ -238,8 +238,8 @@ def run_personalized_collaborative(data: dict, config: Config):
             x[i] -= config.alpha * g_tilde_i
             errors[t, i] = np.linalg.norm(x[i] - data['x_stars'][i])**2
 
-    # return np.mean(errors, axis=1)
-    return errors
+    return np.mean(errors, axis=1)
+    # return errors
 
 # %% 
 # Wrapper for experiments with varying noise_a and fixed heterogeneity
@@ -365,8 +365,8 @@ def run_pareto_experiments(config: Config):
                 data = generate_synthetic_data(config)
                 # We only need the PCL algorithm for this experiment
                 pcl_errors_over_time = run_personalized_collaborative(data, config)
-                # Get the mean error over all agents at the final time step
-                final_mse = np.mean(pcl_errors_over_time[-1, :])
+                # Get the mean error over all agents over last 10 iterations
+                final_mse = np.mean(pcl_errors_over_time[-10:])
                 run_errors.append(final_mse)
 
             # Average the final MSE over all runs
@@ -391,9 +391,9 @@ results = run_pareto_experiments(config)
 #     results = pickle.load(f)
 
 # Save
-# timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-# with open(f"bkup/{timestamp}.pkl", "wb") as f:
-#     pickle.dump(results, f)
+timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+with open(f"bkup/{timestamp}.pkl", "wb") as f:
+    pickle.dump(results, f)
 
 
 # %% 
@@ -458,10 +458,10 @@ def plot_pareto_front(results_mse, config: Config):
     fig, ax = plt.subplots(figsize=(6, 5))
 
     # Use a logarithmic color scale for better visualization of contours
-    # log_norm = colors.LogNorm(vmin=results_mse.min(), vmax=results_mse.max())
+    log_norm = colors.LogNorm(vmin=results_mse.min(), vmax=results_mse.max())
 
     # Filled contour plot (heatmap)
-    contour = ax.contourf(delta_list, n_inv_list, results_mse, levels=15, cmap='viridis_r')
+    contour = ax.contourf(delta_list, n_inv_list, results_mse, levels=10, cmap='viridis_r')
     
     # Contour lines
     ax.contour(delta_list, n_inv_list, results_mse, levels=contour.levels, colors='white', linewidths=0.5, alpha=0.8)
@@ -472,9 +472,6 @@ def plot_pareto_front(results_mse, config: Config):
 
     ax.set_xlabel('$\\delta$', fontsize=12)
     ax.set_ylabel('$n^{-1}$', fontsize=12)
-    
-    # The y-axis (n_inv) should be inverted to show n increasing upwards
-    ax.invert_yaxis()
     
     plt.tight_layout()
     # fig.savefig("fig/pareto_front.png", dpi=300)
