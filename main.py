@@ -31,13 +31,13 @@ class Config:
     #     'high': (0.5, 0.5),
     # }
     # Exhaustive
-    heterogeneity_settings = {}
-    for kernel_het in np.linspace(0.0, 0.9, 10):
-        for reward_het in np.linspace(0.0, 0.9, 10):
-            key = f'({kernel_het},{reward_het})'
-            heterogeneity_settings[key] = (kernel_het, reward_het)
+    # heterogeneity_settings = {}
+    # for kernel_het in np.linspace(0.0, 0.9, 10):
+    #     for reward_het in np.linspace(0.0, 0.9, 10):
+    #         key = f'({kernel_het},{reward_het})'
+    #         heterogeneity_settings[key] = (kernel_het, reward_het)
     # Pareto
-    n_list = 10 * np.arange(1, 11) 
+    n_list = 10 * np.arange(1, 4) 
     delta_list = 1 / n_list
 
 # %% 
@@ -349,10 +349,10 @@ config = Config()
 # results = run_experiments_with_repeats(config)
 
 # Load
-backup_files = [f for f in os.listdir(config.backup_dir) if f.endswith(".pkl")]
-latest_file = max(backup_files, key=lambda x: x.split(".")[0])
-with open(os.path.join(config.backup_dir, latest_file), "rb") as f:
-    results = pickle.load(f)
+# backup_files = [f for f in os.listdir(config.backup_dir) if f.endswith(".pkl")]
+# latest_file = max(backup_files, key=lambda x: x.split(".")[0])
+# with open(os.path.join(config.backup_dir, latest_file), "rb") as f:
+#     results = pickle.load(f)
 
 # Save
 # timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -381,7 +381,7 @@ def plot_results_on_axis(ax, results_dict, config, title):
 
 # fig, axs = plt.subplots(1, 4, figsize=(12, 4))
 # number of rows is number of results divided by 4, rounded up
-fig, axs = plt.subplots(len(results) // 4 + (len(results) % 4 > 0), 4, figsize=(12, 4 * (len(results) // 4 + (len(results) % 4 > 0))), squeeze=False)
+# fig, axs = plt.subplots(len(results) // 4 + (len(results) % 4 > 0), 4, figsize=(12, 4 * (len(results) // 4 + (len(results) % 4 > 0))), squeeze=False)
 
 # plot_results_on_axis(axs[0], results['homogeneous'], config, 'Homogeneous')
 # plot_results_on_axis(axs[1], results['low'], config, 'Low Heterogeneity')
@@ -393,19 +393,19 @@ results_dict = {}
 # results_dict = {0.0: 'No Noise', 0.5: 'Low Noise', 1.0: 'Medium Noise', 5.0: 'High Noise'}
 # for noise in config.noise_a_list:
 #     results_dict[noise] = f'Noise std: {noise}'
-for het_key in results.keys():
-    kernel_het, reward_het = config.heterogeneity_settings[het_key]
-    results_dict[het_key] = f'({round(kernel_het, 1)}, {round(reward_het, 1)})'
-
-for i, (key, label) in enumerate(results_dict.items()):
-    plot_results_on_axis(axs[i//4, i%4], results[key], config, label)
-
-# fig.suptitle('Comparison of Learning Algorithms under Different Heterogeneity Levels', fontsize=18)
-fig.supxlabel('# Samples', fontsize=14, y=0.12)
-fig.supylabel('Mean Squared Error', fontsize=14)
-handles, labels = axs[0,0].get_legend_handles_labels()
-fig.legend(handles, labels, loc='lower center', ncol=len(results), fontsize=14, frameon=False)
-plt.tight_layout(rect=[0, 0.03, 1, 0.94])
+# for het_key in results.keys():
+#     kernel_het, reward_het = config.heterogeneity_settings[het_key]
+#     results_dict[het_key] = f'({round(kernel_het, 1)}, {round(reward_het, 1)})'
+#
+# for i, (key, label) in enumerate(results_dict.items()):
+#     plot_results_on_axis(axs[i//4, i%4], results[key], config, label)
+#
+# # fig.suptitle('Comparison of Learning Algorithms under Different Heterogeneity Levels', fontsize=18)
+# fig.supxlabel('# Samples', fontsize=14, y=0.12)
+# fig.supylabel('Mean Squared Error', fontsize=14)
+# handles, labels = axs[0,0].get_legend_handles_labels()
+# fig.legend(handles, labels, loc='lower center', ncol=len(results), fontsize=14, frameon=False)
+# plt.tight_layout(rect=[0, 0.03, 1, 0.94])
 # plt.show()
 # fig.savefig("fig/all.png", dpi=300)
 
@@ -474,11 +474,11 @@ def plot_heatmap(table, index=2):
     plt.tight_layout()
     return fig
 
-summary_table = compute_summary_table(results, config)
-# truncated_table = summary_table[:9, :9, :]  # For a 4x4 heatmap
-for index in range(2,4):
-    fig = plot_heatmap(summary_table, index)
-    fig.savefig(f"fig/heatmap_{index}.png", dpi=300)
+# summary_table = compute_summary_table(results, config)
+# # truncated_table = summary_table[:9, :9, :]  # For a 4x4 heatmap
+# for index in range(2,4):
+#     fig = plot_heatmap(summary_table, index)
+#     fig.savefig(f"fig/heatmap_{index}.png", dpi=300)
 
 # %% 
 
@@ -552,7 +552,6 @@ def plot_pareto_front(results_mse, config: Config):
     return fig
 
 print("Starting Pareto simulation...")
-pareto_config = Config()
-pareto_results = run_pareto_experiments(pareto_config)
-_ = plot_pareto_front(pareto_results, pareto_config)
+pareto_results = run_pareto_experiments(config)
+_ = plot_pareto_front(pareto_results, config)
 print("Pareto simulation finished.")
