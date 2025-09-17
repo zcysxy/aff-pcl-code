@@ -7,7 +7,7 @@ import pickle
 import datetime
 import os
 
-# %%
+# %% 
 # Configuration
 class Config:
     """Stores all parameters for the numerical experiment."""
@@ -36,8 +36,11 @@ class Config:
         for reward_het in np.linspace(0.0, 0.9, 10):
             key = f'({kernel_het},{reward_het})'
             heterogeneity_settings[key] = (kernel_het, reward_het)
+    # Pareto
+    n_list = 10 * np.arange(1, 11) 
+    delta_list = 1 / n_list
 
-# %%
+# %% 
 # Data Generation for Heterogeneous Systems
 def generate_synthetic_data(config: Config):
     """
@@ -134,7 +137,7 @@ def generate_synthetic_data(config: Config):
     print("Data generation complete.")
     return data
 
-# %%
+# %% 
 ## Algorithms
 def run_independent_learning(data: dict, config: Config):
     """Baseline 1: Each agent learns entirely on its own."""
@@ -152,7 +155,7 @@ def run_independent_learning(data: dict, config: Config):
             
     return np.mean(errors, axis=1)
 
-# %%
+# %% 
 def run_federated_averaging(data: dict, config: Config):
     """Baseline 2: All agents learn a single, unified model."""
     print("Running FL...")
@@ -175,7 +178,7 @@ def run_federated_averaging(data: dict, config: Config):
             
     return np.mean(errors, axis=1)
 
-# %%
+# %% 
 def run_personalized_collaborative(data: dict, config: Config):
     """Proposed Method: Personalized Collaborative Learning."""
     print("Running PCL...")
@@ -238,7 +241,7 @@ def run_personalized_collaborative(data: dict, config: Config):
     # return np.mean(errors, axis=1)
     return errors
 
-# %%
+# %% 
 # Wrapper for experiments with varying noise_a and fixed heterogeneity
 def run_experiments_with_noise(config):
     runs = config.runs
@@ -285,7 +288,7 @@ def run_experiments_with_noise(config):
         }
     return results
 
-# %%
+# %% 
 # Wrapper for experiments with multiple repeats and heterogeneity settings
 def run_experiments_with_repeats(config):
     runs = config.runs
@@ -336,7 +339,7 @@ def run_experiments_with_repeats(config):
     }
     return results
 
-# %%
+# %% 
 
 # Main Execution and Variance Plotting
 config = Config()
@@ -357,7 +360,7 @@ with open(os.path.join(config.backup_dir, latest_file), "rb") as f:
 #     pickle.dump(results, f)
 
 
-# %%
+# %% 
 
 def plot_results_on_axis(ax, results_dict, config, title):
     x = np.arange(config.t)
@@ -395,7 +398,7 @@ for het_key in results.keys():
     results_dict[het_key] = f'({round(kernel_het, 1)}, {round(reward_het, 1)})'
 
 for i, (key, label) in enumerate(results_dict.items()):
-    plot_results_on_axis( axs[i//4, i%4], results[key], config, label)
+    plot_results_on_axis(axs[i//4, i%4], results[key], config, label)
 
 # fig.suptitle('Comparison of Learning Algorithms under Different Heterogeneity Levels', fontsize=18)
 fig.supxlabel('# Samples', fontsize=14, y=0.12)
@@ -406,7 +409,7 @@ plt.tight_layout(rect=[0, 0.03, 1, 0.94])
 # plt.show()
 # fig.savefig("fig/all.png", dpi=300)
 
-# %%
+# %% 
 # Summary table
 def compute_summary_table(results, config):
     het_keys = list(config.heterogeneity_settings.keys())
@@ -462,8 +465,8 @@ def plot_heatmap(table, index=2):
     ax.set_yticks(range((table.shape[0])))
     ax.set_xticklabels([round(v,2) for v in table[0,:,1]])
     ax.set_yticklabels([round(v,2) for v in table[:,0,0]])
-    ax.set_xlabel('$\\delta_b$', fontsize=12, usetex=True)
-    ax.set_ylabel('$\\delta_A$', fontsize=12, usetex=True)
+    ax.set_xlabel('$\delta_b$', fontsize=12, usetex=True)
+    ax.set_ylabel('$\delta_A$', fontsize=12, usetex=True)
     fig.colorbar(im, ax=ax, label='Improvement (%)')
     ax.invert_yaxis()  # Flip the y axis
     plt.tight_layout()
@@ -477,3 +480,79 @@ for index in range(2,4):
     fig = plot_heatmap(summary_table, index)
     fig.savefig(f"fig/heatmap_{index}.png", dpi=300)
 
+# %% 
+
+def run_pareto_experiments(config: Config):
+    """
+    Runs experiments by varying the number of agents (n) and the
+    heterogeneity level (delta) to generate data for the Pareto-like plot.
+    """
+    n_list = config.n_list
+    delta_list = config.delta_list
+    # Store the final MSE for each setting
+    results_mse = np.zeros((len(n_list), len(delta_list)))
+
+    for i, n_val in enumerate(n_list):
+        for j, delta_val in enumerate(delta_list):
+            print(f"\n=== Running for n={n_val}, delta={delta_val:.2f}")
+            # Update config for the current run
+            config.n = n_val
+            config.delta_a = delta_val
+            config.delta_b = delta_val
+
+            run_errors = []
+            for run in range(config.runs):
+                print(f"  Run {run+1}/{config.runs}")
+                data = generate_synthetic_data(config)
+                # We only need the PCL algorithm for this experiment
+                pcl_errors_over_time = run_personalized_collaborative(data, config)
+                # Get the mean error over all agents at the final time step
+                final_mse = np.mean(pcl_errors_over_time[-1, :])
+                run_errors.append(final_mse)
+
+            # Average the final MSE over all runs
+            results_mse[i, j] = np.mean(run_errors)
+            
+    return results_mse
+
+def plot_pareto_front(results_mse, config: Config):
+    """
+    Plots the L-shaped iso-performance contours from the simulation results.
+    """
+    delta_list = config.delta_list
+    n_inv_list = 1 / np.array(config.n_list)
+
+    fig, ax = plt.subplots(figsize=(6, 5))
+
+    # Use a logarithmic color scale for better visualization of contours
+    log_norm = colors.LogNorm(vmin=results_mse.min(), vmax=results_mse.max())
+
+    # Filled contour plot (heatmap)
+    contour = ax.contourf(delta_list, n_inv_list, results_mse, levels=15, cmap='viridis_r', norm=log_norm)
+    
+    # Contour lines
+    ax.contour(delta_list, n_inv_list, results_mse, levels=contour.levels, colors='white', linewidths=0.5, alpha=0.8)
+
+    # Add a colorbar
+    cbar = fig.colorbar(contour)
+    cbar.set_label('Mean Squared Error (MSE)')
+
+    ax.set_xlabel('Heterogeneity ($\\delta$)', fontsize=12)
+    ax.set_ylabel('Collaboration Term ($n^{-1}$)', fontsize=12)
+    ax.set_title('PCL Performance (MSE)', fontsize=14)
+    
+    # The y-axis (n_inv) should be inverted to show n increasing upwards
+    ax.invert_yaxis()
+    
+    plt.tight_layout()
+    fig.savefig("fig/pareto_front.png", dpi=300)
+    print("\nSaved Pareto front plot to fig/pareto_front.png")
+    plt.show()
+    
+    return fig
+
+print("Starting Pareto simulation...")
+pareto_config = Config()
+pareto_results = run_pareto_experiments(pareto_config)
+_ = plot_pareto_front(pareto_results, pareto_config)
+print("Pareto simulation finished.")
