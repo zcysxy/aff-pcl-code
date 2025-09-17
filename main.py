@@ -431,7 +431,7 @@ def compute_summary_table(results, config):
         res = results[het_key]
         means = {k: res[k][0] for k in res}
         # Compute last 10-step averages for all methods
-        last10 = {k: np.mean(means[k][-10:]) for k in means}
+        last10 = {k: np.mean(means[k][50:60]) for k in means}
         table[row_idx, col_idx, 0:2] = [delta_A, delta_b]
         for idx, (num_key, denom_key) in enumerate(method_pairs):
             denom = last10[denom_key]
@@ -468,9 +468,12 @@ def plot_heatmap(table, index=2):
     ax.invert_yaxis()  # Flip the y axis
     plt.tight_layout()
     plt.show()
+    plt.tight_layout()
+    return fig
 
 summary_table = compute_summary_table(results, config)
 # truncated_table = summary_table[:9, :9, :]  # For a 4x4 heatmap
 for index in range(2,4):
-    plot_heatmap(summary_table, index)
+    fig = plot_heatmap(summary_table, index)
+    fig.savefig(f"fig/heatmap_{index}.png", dpi=300)
 
