@@ -12,7 +12,7 @@ import os
 class Config:
     """Stores all parameters for the numerical experiment."""
     backup_dir = "bkup"
-    runs = 10
+    runs = 3
     n = 20
     d = 5
     t = 80
@@ -37,7 +37,7 @@ class Config:
     #         key = f'({kernel_het},{reward_het})'
     #         heterogeneity_settings[key] = (kernel_het, reward_het)
     # Pareto
-    n_list = 10 * np.arange(1, 4) 
+    n_list = 10 * np.arange(1, 5) 
     delta_list = 1 / n_list
 
 # %% 
@@ -341,12 +341,48 @@ def run_experiments_with_repeats(config):
 
 # %% 
 
+def run_pareto_experiments(config: Config):
+    """
+    Runs experiments by varying the number of agents (n) and the
+    heterogeneity level (delta) to generate data for the Pareto-like plot.
+    """
+    n_list = config.n_list
+    delta_list = config.delta_list
+    # Store the final MSE for each setting
+    results_mse = np.zeros((len(n_list), len(delta_list)))
+
+    for i, n_val in enumerate(n_list):
+        for j, delta_val in enumerate(delta_list):
+            print(f"\n=== Running for n={n_val}, delta={delta_val:.2f}")
+            # Update config for the current run
+            config.n = n_val
+            config.delta_a = delta_val
+            config.delta_b = delta_val
+
+            run_errors = []
+            for run in range(config.runs):
+                print(f"  Run {run+1}/{config.runs}")
+                data = generate_synthetic_data(config)
+                # We only need the PCL algorithm for this experiment
+                pcl_errors_over_time = run_personalized_collaborative(data, config)
+                # Get the mean error over all agents at the final time step
+                final_mse = np.mean(pcl_errors_over_time[-1, :])
+                run_errors.append(final_mse)
+
+            # Average the final MSE over all runs
+            results_mse[i, j] = np.mean(run_errors)
+            
+    return results_mse
+
+# %% 
+
 # Main Execution and Variance Plotting
 config = Config()
 
 # Run
 # results = run_experiments_with_noise(config)
 # results = run_experiments_with_repeats(config)
+results = run_pareto_experiments(config)
 
 # Load
 # backup_files = [f for f in os.listdir(config.backup_dir) if f.endswith(".pkl")]
@@ -409,111 +445,8 @@ results_dict = {}
 # plt.show()
 # fig.savefig("fig/all.png", dpi=300)
 
-# %% 
-# Summary table
-def compute_summary_table(results, config):
-    het_keys = list(config.heterogeneity_settings.keys())
-    delta_A_list = sorted(list(set([config.heterogeneity_settings[k][0] for k in het_keys])))
-    delta_b_list = sorted(list(set([config.heterogeneity_settings[k][1] for k in het_keys])))
-    n_A = len(delta_A_list)
-    n_b = len(delta_b_list)
 
-    # Define method pairs for improvement calculation
-    method_pairs = [
-        ('pcl', 'ind'),      # PCL over IL
-        ('pcl', 'fedavg'),  # PCL over FL
-        ('pcl_i', 'ind'),   # First agent over IL
-        ('pcl_i', 'fedavg') # First agent over FL
-    ]
-    table = np.zeros((n_A, n_b, len(method_pairs) + 2))  # +2 for delta_A and delta_b
-
-    for het_key in het_keys:
-        delta_A, delta_b = config.heterogeneity_settings[het_key]
-        row_idx = delta_A_list.index(delta_A)
-        col_idx = delta_b_list.index(delta_b)
-        res = results[het_key]
-        means = {k: res[k][0] for k in res}
-        # Compute last 10-step averages for all methods
-        last10 = {k: np.mean(means[k][50:60]) for k in means}
-        table[row_idx, col_idx, 0:2] = [delta_A, delta_b]
-        for idx, (num_key, denom_key) in enumerate(method_pairs):
-            denom = last10[denom_key]
-            num = last10[num_key]
-            imp = 100 * (denom - num) / denom if (denom != 0 and num <= 2*denom) else np.nan
-            table[row_idx, col_idx, idx+2] = imp
-    return table
-
-# Plot heatmap of improvement of PCL over IL (table[:,:,2])
-def plot_heatmap(table, index=2):
-    cmp = plt.get_cmap('YlGnBu')
-    cmp.set_bad(color='lightgray')  # Color for NaN values
-    fig, ax = plt.subplots(figsize=(5,4))
-    im = ax.imshow(table[:,:,index], cmap=cmp, aspect='auto', vmin=0, vmax=100)
-    for (i, j), val in np.ndenumerate(table[:,:,index]):
-        if np.isnan(val):
-            text_color = 'black'
-            display_val = "NaN"
-        else:
-            rgba = cmp(val / 100)  # Normalize val to [0,1] for colormap
-            r, g, b, _ = rgba
-            # Calculate luminance (perceived brightness)
-            luminance = 0.299 * r + 0.587 * g + 0.114 * b
-            text_color = 'black' if luminance > 0.5 else 'white'
-            display_val = str(round(val))
-        ax.text(j, i, display_val, ha='center', va='center', color=text_color, fontsize=8)
-    ax.set_xticks(range((table.shape[1])))
-    ax.set_yticks(range((table.shape[0])))
-    ax.set_xticklabels([round(v,2) for v in table[0,:,1]])
-    ax.set_yticklabels([round(v,2) for v in table[:,0,0]])
-    ax.set_xlabel('$\delta_b$', fontsize=12, usetex=True)
-    ax.set_ylabel('$\delta_A$', fontsize=12, usetex=True)
-    fig.colorbar(im, ax=ax, label='Improvement (%)')
-    ax.invert_yaxis()  # Flip the y axis
-    plt.tight_layout()
-    plt.show()
-    plt.tight_layout()
-    return fig
-
-# summary_table = compute_summary_table(results, config)
-# # truncated_table = summary_table[:9, :9, :]  # For a 4x4 heatmap
-# for index in range(2,4):
-#     fig = plot_heatmap(summary_table, index)
-#     fig.savefig(f"fig/heatmap_{index}.png", dpi=300)
-
-# %% 
-
-def run_pareto_experiments(config: Config):
-    """
-    Runs experiments by varying the number of agents (n) and the
-    heterogeneity level (delta) to generate data for the Pareto-like plot.
-    """
-    n_list = config.n_list
-    delta_list = config.delta_list
-    # Store the final MSE for each setting
-    results_mse = np.zeros((len(n_list), len(delta_list)))
-
-    for i, n_val in enumerate(n_list):
-        for j, delta_val in enumerate(delta_list):
-            print(f"\n=== Running for n={n_val}, delta={delta_val:.2f}")
-            # Update config for the current run
-            config.n = n_val
-            config.delta_a = delta_val
-            config.delta_b = delta_val
-
-            run_errors = []
-            for run in range(config.runs):
-                print(f"  Run {run+1}/{config.runs}")
-                data = generate_synthetic_data(config)
-                # We only need the PCL algorithm for this experiment
-                pcl_errors_over_time = run_personalized_collaborative(data, config)
-                # Get the mean error over all agents at the final time step
-                final_mse = np.mean(pcl_errors_over_time[-1, :])
-                run_errors.append(final_mse)
-
-            # Average the final MSE over all runs
-            results_mse[i, j] = np.mean(run_errors)
-            
-    return results_mse
+# %%
 
 def plot_pareto_front(results_mse, config: Config):
     """
@@ -525,33 +458,29 @@ def plot_pareto_front(results_mse, config: Config):
     fig, ax = plt.subplots(figsize=(6, 5))
 
     # Use a logarithmic color scale for better visualization of contours
-    log_norm = colors.LogNorm(vmin=results_mse.min(), vmax=results_mse.max())
+    # log_norm = colors.LogNorm(vmin=results_mse.min(), vmax=results_mse.max())
 
     # Filled contour plot (heatmap)
-    contour = ax.contourf(delta_list, n_inv_list, results_mse, levels=15, cmap='viridis_r', norm=log_norm)
+    contour = ax.contourf(delta_list, n_inv_list, results_mse, levels=15, cmap='viridis_r')
     
     # Contour lines
     ax.contour(delta_list, n_inv_list, results_mse, levels=contour.levels, colors='white', linewidths=0.5, alpha=0.8)
 
     # Add a colorbar
     cbar = fig.colorbar(contour)
-    cbar.set_label('Mean Squared Error (MSE)')
+    cbar.set_label('MSE')
 
-    ax.set_xlabel('Heterogeneity ($\\delta$)', fontsize=12)
-    ax.set_ylabel('Collaboration Term ($n^{-1}$)', fontsize=12)
-    ax.set_title('PCL Performance (MSE)', fontsize=14)
+    ax.set_xlabel('$\\delta$', fontsize=12)
+    ax.set_ylabel('$n^{-1}$', fontsize=12)
     
     # The y-axis (n_inv) should be inverted to show n increasing upwards
     ax.invert_yaxis()
     
     plt.tight_layout()
-    fig.savefig("fig/pareto_front.png", dpi=300)
-    print("\nSaved Pareto front plot to fig/pareto_front.png")
+    # fig.savefig("fig/pareto_front.png", dpi=300)
     plt.show()
     
     return fig
 
-print("Starting Pareto simulation...")
-pareto_results = run_pareto_experiments(config)
-_ = plot_pareto_front(pareto_results, config)
+plot_pareto_front(results, config)
 print("Pareto simulation finished.")
