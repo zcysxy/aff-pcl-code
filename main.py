@@ -382,13 +382,13 @@ config = Config()
 # Run
 # results = run_experiments_with_noise(config)
 # results = run_experiments_with_repeats(config)
-results = run_pareto_experiments(config)
+# results = run_pareto_experiments(config)
 
 # Load
-# backup_files = [f for f in os.listdir(config.backup_dir) if f.endswith(".pkl")]
-# latest_file = max(backup_files, key=lambda x: x.split(".")[0])
-# with open(os.path.join(config.backup_dir, latest_file), "rb") as f:
-#     results = pickle.load(f)
+backup_files = [f for f in os.listdir(config.backup_dir) if f.endswith(".pkl")]
+latest_file = max(backup_files, key=lambda x: x.split(".")[0])
+with open(os.path.join(config.backup_dir, latest_file), "rb") as f:
+    results = pickle.load(f)
 
 # Save
 # timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -465,10 +465,8 @@ def plot_pareto_front(results_mse, config: Config):
 
     fig, ax = plt.subplots(figsize=(6, 5))
 
-    # Filled contour plot (heatmap) with linear normalization
-    contour = ax.contourf(delta_list, n_inv_list, results_mse_smooth, levels=10, cmap='viridis_r')
-    
-    # Contour lines
+    # Use the reversed colormap
+    contour = ax.contourf(delta_list, n_inv_list, results_mse_smooth, levels=8, cmap='YlGnBu_r')
     ax.contour(delta_list, n_inv_list, results_mse_smooth, levels=contour.levels, colors='white', linewidths=0.5, alpha=0.8)
 
     # Add a colorbar with log labels
@@ -478,17 +476,16 @@ def plot_pareto_front(results_mse, config: Config):
     ticks = [1e-3, 5e-3, 1e-2, 2e-2]
     cbar.set_ticks(ticks)
     cbar.ax.yaxis.set_major_formatter(mticker.LogFormatter())
-    cbar.ax.set_yticklabels([f"{tick:.0e}".replace('e+0', 'e+').replace('e-0', 'e-') for tick in ticks])
+    cbar.ax.set_yticklabels([np.format_float_scientific(tick,exp_digits=1,trim='-') for tick in ticks])
 
     ax.set_xlabel('$\\delta$', fontsize=12)
     ax.set_ylabel('$n^{-1}$', fontsize=12)
     
     plt.tight_layout()
-    # fig.savefig("fig/pareto_front.png", dpi=300)
     plt.show()
     
     return fig
 
+fig = plot_pareto_front(results, config)
+fig.savefig("fig/pareto_front.png", dpi=300)
 
-plot_pareto_front(results, config)
-print("Pareto simulation finished.")
