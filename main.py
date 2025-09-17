@@ -391,9 +391,9 @@ results = run_pareto_experiments(config)
 #     results = pickle.load(f)
 
 # Save
-timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-with open(f"bkup/{timestamp}.pkl", "wb") as f:
-    pickle.dump(results, f)
+# timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+# with open(f"bkup/{timestamp}.pkl", "wb") as f:
+#     pickle.dump(results, f)
 
 
 # %% 
@@ -451,24 +451,34 @@ results_dict = {}
 def plot_pareto_front(results_mse, config: Config):
     """
     Plots the L-shaped iso-performance contours from the simulation results.
+    Smooths the contour plot using Gaussian filtering.
+    Uses log labels on the colorbar, but does not use LogNorm for plotting.
     """
+    from scipy.ndimage import gaussian_filter
+    import matplotlib.ticker as mticker
+
     delta_list = config.delta_list
     n_inv_list = 1 / np.array(config.n_list)
 
+    # Smooth the results using a Gaussian filter
+    results_mse_smooth = gaussian_filter(results_mse, sigma=1)
+
     fig, ax = plt.subplots(figsize=(6, 5))
 
-    # Use a logarithmic color scale for better visualization of contours
-    log_norm = colors.LogNorm(vmin=results_mse.min(), vmax=results_mse.max())
-
-    # Filled contour plot (heatmap)
-    contour = ax.contourf(delta_list, n_inv_list, results_mse, levels=10, cmap='viridis_r')
+    # Filled contour plot (heatmap) with linear normalization
+    contour = ax.contourf(delta_list, n_inv_list, results_mse_smooth, levels=10, cmap='viridis_r')
     
     # Contour lines
-    ax.contour(delta_list, n_inv_list, results_mse, levels=contour.levels, colors='white', linewidths=0.5, alpha=0.8)
+    ax.contour(delta_list, n_inv_list, results_mse_smooth, levels=contour.levels, colors='white', linewidths=0.5, alpha=0.8)
 
-    # Add a colorbar
+    # Add a colorbar with log labels
     cbar = fig.colorbar(contour)
     cbar.set_label('MSE')
+    # Set custom ticks for colorbar, including 5e-2
+    ticks = [1e-3, 5e-3, 1e-2, 2e-2]
+    cbar.set_ticks(ticks)
+    cbar.ax.yaxis.set_major_formatter(mticker.LogFormatter())
+    cbar.ax.set_yticklabels([f"{tick:.0e}".replace('e+0', 'e+').replace('e-0', 'e-') for tick in ticks])
 
     ax.set_xlabel('$\\delta$', fontsize=12)
     ax.set_ylabel('$n^{-1}$', fontsize=12)
@@ -478,6 +488,7 @@ def plot_pareto_front(results_mse, config: Config):
     plt.show()
     
     return fig
+
 
 plot_pareto_front(results, config)
 print("Pareto simulation finished.")
