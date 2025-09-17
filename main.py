@@ -15,7 +15,7 @@ class Config:
     runs = 10
     n = 20
     d = 5
-    t = 80
+    t = 60
     alpha = 0.01
     base_scale_a = 4
     delta_a = 0.1
@@ -24,18 +24,18 @@ class Config:
     noise_a = 1
     noise_a_list = [0.0, 0.5, 1.0, 2.0]
     # Basic
-    # heterogeneity_settings = {
-    #     'homogeneous': (0.0, 0.0),
-    #     'low': (0.05, 0.05),
-    #     'medium': (0.2, 0.2),
-    #     'high': (0.5, 0.5),
-    # }
+    heterogeneity_settings = {
+        'homogeneous': (0.0, 0.0),
+        'low': (0.05, 0.05),
+        'medium': (0.3, 0.3),
+        'high': (0.8, 0.8),
+    }
     # Exhaustive
-    heterogeneity_settings = {}
-    for kernel_het in np.linspace(0.0, 0.9, 10):
-        for reward_het in np.linspace(0.0, 0.9, 10):
-            key = f'({kernel_het},{reward_het})'
-            heterogeneity_settings[key] = (kernel_het, reward_het)
+    # heterogeneity_settings = {}
+    # for kernel_het in np.linspace(0.0, 0.9, 10):
+    #     for reward_het in np.linspace(0.0, 0.9, 10):
+    #         key = f'({kernel_het},{reward_het})'
+    #         heterogeneity_settings[key] = (kernel_het, reward_het)
 
 # %%
 # Data Generation for Heterogeneous Systems
@@ -343,13 +343,13 @@ config = Config()
 
 # Run
 # results = run_experiments_with_noise(config)
-# results = run_experiments_with_repeats(config)
+results = run_experiments_with_repeats(config)
 
 # Load
-backup_files = [f for f in os.listdir(config.backup_dir) if f.endswith(".pkl")]
-latest_file = max(backup_files, key=lambda x: x.split(".")[0])
-with open(os.path.join(config.backup_dir, latest_file), "rb") as f:
-    results = pickle.load(f)
+# backup_files = [f for f in os.listdir(config.backup_dir) if f.endswith(".pkl")]
+# latest_file = max(backup_files, key=lambda x: x.split(".")[0])
+# with open(os.path.join(config.backup_dir, latest_file), "rb") as f:
+#     results = pickle.load(f)
 
 # Save
 # timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -392,7 +392,16 @@ results_dict = {}
 #     results_dict[noise] = f'Noise std: {noise}'
 for het_key in results.keys():
     kernel_het, reward_het = config.heterogeneity_settings[het_key]
-    results_dict[het_key] = f'({round(kernel_het, 1)}, {round(reward_het, 1)})'
+    # results_dict[het_key] = f'({round(kernel_het, 1)}, {round(reward_het, 1)})'
+    # Use a dictionary mapping instead of match-case for compatibility
+    het_map = {
+        'homogeneous': 'Homogeneous',
+        'low': 'Low Heterogeneity',
+        'medium': 'Medium Heterogeneity',
+        'high': 'High Heterogeneity',
+    }
+    results_dict[het_key] = het_map[het_key]
+
 
 for i, (key, label) in enumerate(results_dict.items()):
     plot_results_on_axis( axs[i//4, i%4], results[key], config, label)
@@ -404,7 +413,7 @@ handles, labels = axs[0,0].get_legend_handles_labels()
 fig.legend(handles, labels, loc='lower center', ncol=len(results), fontsize=14, frameon=False)
 plt.tight_layout(rect=[0, 0.03, 1, 0.94])
 # plt.show()
-# fig.savefig("fig/all.png", dpi=300)
+fig.savefig("fig/comp.png", dpi=300)
 
 # %%
 # Summary table
@@ -471,9 +480,9 @@ def plot_heatmap(table, index=2):
     plt.tight_layout()
     return fig
 
-summary_table = compute_summary_table(results, config)
-# truncated_table = summary_table[:9, :9, :]  # For a 4x4 heatmap
-for index in range(2,4):
-    fig = plot_heatmap(summary_table, index)
-    fig.savefig(f"fig/heatmap_{index}.png", dpi=300)
+# summary_table = compute_summary_table(results, config)
+# # truncated_table = summary_table[:9, :9, :]  # For a 4x4 heatmap
+# for index in range(2,4):
+#     fig = plot_heatmap(summary_table, index)
+#     fig.savefig(f"fig/heatmap_{index}.png", dpi=300)
 
