@@ -25,7 +25,7 @@ class Config:
     noise_a_list = [0.0, 0.5, 1.0, 2.0]
     # Basic
     heterogeneity_settings = {
-        'high': (0.6, 0.6),
+        'high': (0.7, 0.7),
     }
     # Exhaustive
     # heterogeneity_settings = {}
@@ -369,6 +369,7 @@ def plot_results_on_axis(ax, results_dict, config, title, keys):
         ax.fill_between(x, mean-1.64*std/np.sqrt(config.runs), mean+1.64*std/np.sqrt(config.runs), color=color, alpha=0.2)
     ax.set_title(title, fontsize=14)
     ax.set_yscale('log')
+    ax.set_ylim(1e-3, 2.5e0)
     ax.tick_params(axis='both', which='both', length=0)
     ax.set_aspect(1./ax.get_data_ratio())
     # ax.grid(True, which="both", ls="--", alpha=0.6)  # grid removed
@@ -387,76 +388,5 @@ handles, labels = axs[0].get_legend_handles_labels()
 fig.legend(handles, labels, loc='lower center', ncol=2, fontsize=14, frameon=False)
 plt.tight_layout(rect=[0, 0.03, 1, 0.94])
 # plt.show()
-# fig.savefig("fig/all.png", dpi=300)
-
-# %%
-# Summary table
-def compute_summary_table(results, config):
-    het_keys = list(config.heterogeneity_settings.keys())
-    delta_A_list = sorted(list(set([config.heterogeneity_settings[k][0] for k in het_keys])))
-    delta_b_list = sorted(list(set([config.heterogeneity_settings[k][1] for k in het_keys])))
-    n_A = len(delta_A_list)
-    n_b = len(delta_b_list)
-
-    # Define method pairs for improvement calculation
-    method_pairs = [
-        ('pcl', 'ind'),      # PCL over IL
-        ('pcl', 'fedavg'),  # PCL over FL
-        ('pcl_i', 'ind'),   # First agent over IL
-        ('pcl_i', 'fedavg') # First agent over FL
-    ]
-    table = np.zeros((n_A, n_b, len(method_pairs) + 2))  # +2 for delta_A and delta_b
-
-    for het_key in het_keys:
-        delta_A, delta_b = config.heterogeneity_settings[het_key]
-        row_idx = delta_A_list.index(delta_A)
-        col_idx = delta_b_list.index(delta_b)
-        res = results[het_key]
-        means = {k: res[k][0] for k in res}
-        # Compute last 10-step averages for all methods
-        last10 = {k: np.mean(means[k][50:60]) for k in means}
-        table[row_idx, col_idx, 0:2] = [delta_A, delta_b]
-        for idx, (num_key, denom_key) in enumerate(method_pairs):
-            denom = last10[denom_key]
-            num = last10[num_key]
-            imp = 100 * (denom - num) / denom if (denom != 0 and num <= 2*denom) else np.nan
-            table[row_idx, col_idx, idx+2] = imp
-    return table
-
-# Plot heatmap of improvement of PCL over IL (table[:,:,2])
-def plot_heatmap(table, index=2):
-    cmp = plt.get_cmap('YlGnBu')
-    cmp.set_bad(color='lightgray')  # Color for NaN values
-    fig, ax = plt.subplots(figsize=(5,4))
-    im = ax.imshow(table[:,:,index], cmap=cmp, aspect='auto', vmin=0, vmax=100)
-    for (i, j), val in np.ndenumerate(table[:,:,index]):
-        if np.isnan(val):
-            text_color = 'black'
-            display_val = "NaN"
-        else:
-            rgba = cmp(val / 100)  # Normalize val to [0,1] for colormap
-            r, g, b, _ = rgba
-            # Calculate luminance (perceived brightness)
-            luminance = 0.299 * r + 0.587 * g + 0.114 * b
-            text_color = 'black' if luminance > 0.5 else 'white'
-            display_val = str(round(val))
-        ax.text(j, i, display_val, ha='center', va='center', color=text_color, fontsize=8)
-    ax.set_xticks(range((table.shape[1])))
-    ax.set_yticks(range((table.shape[0])))
-    ax.set_xticklabels([round(v,2) for v in table[0,:,1]])
-    ax.set_yticklabels([round(v,2) for v in table[:,0,0]])
-    ax.set_xlabel('$\\delta_b$', fontsize=12, usetex=True)
-    ax.set_ylabel('$\\delta_A$', fontsize=12, usetex=True)
-    fig.colorbar(im, ax=ax, label='Improvement (%)')
-    ax.invert_yaxis()  # Flip the y axis
-    plt.tight_layout()
-    plt.show()
-    plt.tight_layout()
-    return fig
-
-# summary_table = compute_summary_table(results, config)
-# # truncated_table = summary_table[:9, :9, :]  # For a 4x4 heatmap
-# for index in range(2,4):
-#     fig = plot_heatmap(summary_table, index)
-#     fig.savefig(f"fig/heatmap_{index}.png", dpi=300)
+# fig.savefig("fig/specific_0.6.png", dpi=300)
 
