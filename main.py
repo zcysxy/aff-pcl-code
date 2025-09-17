@@ -12,8 +12,8 @@ import os
 class Config:
     """Stores all parameters for the numerical experiment."""
     backup_dir = "bkup"
-    runs = 20
-    n = 40
+    runs = 10
+    n = 50
     d = 5
     t = 70
     alpha = 0.01
@@ -25,7 +25,7 @@ class Config:
     noise_a_list = [0.0, 0.5, 1.0, 2.0]
     # Basic
     heterogeneity_settings = {
-        'high': (0.7, 0.7),
+        'high': (0.6, 0.6),
     }
     # Exhaustive
     # heterogeneity_settings = {}
@@ -349,9 +349,9 @@ results = run_experiments_with_repeats(config)
 #     results = pickle.load(f)
 
 # Save
-# timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-# with open(f"bkup/{timestamp}.pkl", "wb") as f:
-#     pickle.dump(results, f)
+timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+with open(f"bkup/{timestamp}.pkl", "wb") as f:
+    pickle.dump(results, f)
 
 
 # %%
@@ -361,7 +361,7 @@ def plot_results_on_axis(ax, results_dict, config, title, keys):
     for key, label, marker, color in [
         (keys[0], 'Independent', 'o', 'C0'),
         # ('fedavg', 'Federated', '^', 'C1'),  # triangle marker
-        (keys[1], 'Personalized', 's', 'C3'),
+        (keys[1], 'PCL', 's', 'C3'),
         # ('pcl_i', 'Agent-Specific', 's', 'C3'),  # Changed marker to square ('s') for matplotlib
         ]:
         mean, std = results_dict[key]
@@ -382,9 +382,9 @@ plot_results_on_axis(axs[1], results['high'], config, 'Agent close to center', (
 
 # fig.suptitle('Comparison of Learning Algorithms under Different Heterogeneity Levels', fontsize=18)
 fig.supxlabel('# Samples', fontsize=14, y=0.12)
-fig.supylabel('Mean Squared Error', fontsize=14)
+fig.supylabel('MSE', fontsize=14)
 handles, labels = axs[0].get_legend_handles_labels()
-fig.legend(handles, labels, loc='lower center', ncol=len(results), fontsize=14, frameon=False)
+fig.legend(handles, labels, loc='lower center', ncol=2, fontsize=14, frameon=False)
 plt.tight_layout(rect=[0, 0.03, 1, 0.94])
 # plt.show()
 # fig.savefig("fig/all.png", dpi=300)
