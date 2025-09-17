@@ -2,6 +2,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.stats import multivariate_normal
+from scipy.linalg import polar
 import pickle
 import datetime
 import os
@@ -11,24 +12,26 @@ import os
 class Config:
     """Stores all parameters for the numerical experiment."""
     backup_dir = "bkup"
-    runs = 10
+    runs = 5
     n = 20
     d = 5
-    t = 80
+    t = 50
     alpha = 0.01
     base_scale_a = 4
     delta_a = 0.1
     delta_b = 0.1
     noise_b = 0.5
     noise_a = 1
-    noise_a_list = [0.0, 0.5, 1.0, 2.0]
+    # noise_a_list = [0.0, 0.5, 1.0, 2.0]
+    nu = 1
+    nu_list = [2, 5]
     # Basic
-    # heterogeneity_settings = {
-    #     'homogeneous': (0.0, 0.0),
-    #     'low': (0.05, 0.05),
-    #     'medium': (0.2, 0.2),
-    #     'high': (0.5, 0.5),
-    # }
+    heterogeneity_settings = {
+        'homogeneous': (0.0, 0.0),
+        'low': (0.05, 0.05),
+        'medium': (0.2, 0.2),
+        'high': (0.5, 0.5),
+    }
     # Exhaustive
     heterogeneity_settings = {}
     for kernel_het in np.linspace(0.0, 0.9, 10):
@@ -42,12 +45,13 @@ def generate_synthetic_data(config: Config):
     """
     Generates synthetic data for a multi-agent heterogeneous linear system
     based on the paper's setup.
+
+    Create heterogeneous environment distributions (mu^i)
+    Multivariate distribution (feature space)
+    Each agent's data distribution is a Gaussian with a different mean.
     """
     print("Generating synthetic data...")
 
-    # Create heterogeneous environment distributions (mu^i)
-    # Multivariate distribution (feature space)
-    # Each agent's data distribution is a Gaussian with a different mean.
     means = []
     for i in range(config.n):
         rand_vec = np.random.randn(config.d)
@@ -60,9 +64,11 @@ def generate_synthetic_data(config: Config):
     cov = np.eye(config.d)
     distributions = [multivariate_normal(mean=m, cov=cov) for m in means]
 
-    # Define shared feature embedding A(s) and Phi(s)
-    # We use multiplicative noise
-    # A_bar_base is a shared, underlying positive definite matrix.
+    """
+    Define shared feature embedding A(s) and Phi(s)
+    We use multiplicative noise
+    A_bar_base is a shared, underlying positive definite matrix.
+    """
     _temp_A = np.random.rand(config.d, config.d)
     A_bar_base = _temp_A.T @ _temp_A + config.d * np.eye(config.d) # nice conditioning
 
@@ -71,18 +77,30 @@ def generate_synthetic_data(config: Config):
 
 
     def A_func(s):
-        # The stochastic feature matrix A(s) depends on the sample s.
-        # This ensures that E_{s~mu_i}[A(s)] is different for each agent.
-        return (config.noise_a * np.outer(s, s) + np.eye(config.d)) @ A_bar_base
+        """
+        The stochastic feature matrix A(s) depends on the sample s and noise alignment nu.
+        This ensures that E_{s~mu_i}[A(s)] is different for each agent.
+
+        The noise alignment is controlled by an orthogonal matrix U(s),
+        whose direction is more aligned when nu is small,
+        and more random when nu is large.
+        Specifically, it interpolates between identity and a random orthogonal matrix.
+        """
+        _temp_U = np.outer(s, np.ones(config.d))
+        U, _ = polar(np.eye(config.d) + config.nu / np.linalg.cond(A_bar_base) * _temp_U)
+        return (config.noise_a * np.outer(s, s) + np.eye(config.d)) @ U @ A_bar_base
 
     def Phi_func(s):
-        # The stochastic feature matrix Phi(s) depends on the sample s.
-        # This ensures that E_{s~mu_i}[Phi(s)] is different for each agent.
+        """
+        The stochastic feature matrix Phi(s) depends on the sample s.
+        This ensures that E_{s~mu_i}[Phi(s)] is different for each agent.
+        """
         return (config.noise_b * np.outer(s, s) + np.eye(config.d)) @ Phi_bar_base
 
     def b_func(s, theta_star):
-        # The stochastic label b^i(s) follows a linear structure.
-        # return Phi @ theta_star
+        """
+        The stochastic label b^i(s) follows a linear structure.
+        """
         return Phi_func(s) @ theta_star
 
     # Create heterogeneous true reward parameters (theta_star_i)
@@ -101,9 +119,11 @@ def generate_synthetic_data(config: Config):
         theta_star = theta_star_base + config.delta_b * rand_vec_normalized
         thetas_star.append(theta_star)
 
-    # Calculate ground truth solutions x_star_i via Monte Carlo
-    # The true solution x_star_i = inv(A_bar_i) @ b_bar_i, where the bars
-    # denote expectation over mu_i. We approximate this with sampling.
+    """
+    Calculate ground truth solutions x_star_i via Monte Carlo
+    The true solution x_star_i = inv(A_bar_i) @ b_bar_i, where the bars
+    denote expectation over mu_i. We approximate this with sampling.
+    """
     print("Calculating ground truth solutions via Monte Carlo...")
     n_samples_mc = 5000
     x_stars = []
@@ -114,8 +134,10 @@ def generate_synthetic_data(config: Config):
         x_star_i = np.linalg.solve(A_bar_i, b_bar_i)
         x_stars.append(x_star_i)
 
-    # Define density ratio function rho^i(s)
-    # rho^i(s) = mu^i(s) / mu^0(s), where mu^0 = (1/n) * sum(mu^j)
+    """
+    Define density ratio function rho^i(s)
+    rho^i(s) = mu^i(s) / mu^0(s), where mu^0 = (1/n) * sum(mu^j)
+    """
     def rho_func(s, i):
         mu_i_pdf = distributions[i].pdf(s)
         mu_0_pdf = np.mean([dist.pdf(s) for dist in distributions])
@@ -135,7 +157,7 @@ def generate_synthetic_data(config: Config):
 
 # %%
 ## Algorithms
-def run_independent_learning(data: dict, config: Config):
+def il(data: dict, config: Config):
     """Baseline 1: Each agent learns entirely on its own."""
     print("Running IL...")
     x = [np.zeros(config.d) for _ in range(config.n)]
@@ -152,7 +174,7 @@ def run_independent_learning(data: dict, config: Config):
     return np.mean(errors, axis=1)
 
 # %%
-def run_federated_averaging(data: dict, config: Config):
+def fedavg(data: dict, config: Config):
     """Baseline 2: All agents learn a single, unified model."""
     print("Running FL...")
     x_0 = np.zeros(config.d)  # Single central model
@@ -168,14 +190,14 @@ def run_federated_averaging(data: dict, config: Config):
         
         x_0 -= config.alpha * (grad_agg / config.n)
         
-        #NOTE: Measure error of the single model against each agent's personal optimum
+        # Measure error of the single model against each agent's personal optimum
         for i in range(config.n):
             errors[t, i] = np.linalg.norm(x_0 - data['x_stars'][i])**2
             
     return np.mean(errors, axis=1)
 
 # %%
-def run_personalized_collaborative(data: dict, config: Config):
+def pcl(data: dict, config: Config):
     """Proposed Method: Personalized Collaborative Learning."""
     print("Running PCL...")
     # Personalized models for each agent
@@ -239,24 +261,23 @@ def run_personalized_collaborative(data: dict, config: Config):
 
 # %%
 # Wrapper for experiments with varying noise_a and fixed heterogeneity
-def run_experiments_with_noise(config):
+def simul_noise(config):
     runs = config.runs
     n_iter = config.t
     methods = {
-        'ind': run_independent_learning,
-        'fedavg': run_federated_averaging,
-        'pcl': run_personalized_collaborative,
-        'pcl_i': run_personalized_collaborative,
+        'ind': il,
+        'fedavg': fedavg,
+        'pcl': pcl,
+        'pcl_i': pcl,
     }
-    noise_a_list = config.noise_a_list
+    # noise_a_list = config.noise_a_list
+    nu_list = config.nu_list
 
     # Results: noise -> method -> (mean, std)
     results = {}
-    for noise_a in noise_a_list:
-        print(f"\n=== Running for noise_a={noise_a}")
-        config.noise_a = noise_a
-        # Regularize learning rate by exp(-noise/2)
-        # config.alpha = 0.01 * np.exp(-noise_a)
+    for nu in nu_list:
+        print(f"\n=== Running for nu={nu}")
+        config.nu = nu
         errors = {method: np.zeros((runs, n_iter)) for method in methods}
 
         def run_all_methods(data, config, run_idx):
@@ -275,7 +296,7 @@ def run_experiments_with_noise(config):
             run_all_methods(data, config, run)
 
         # Compute mean and std
-        results[noise_a] = {
+        results[nu] = {
             method: (
                 errors[method].mean(axis=0),
                 errors[method].std(axis=0)
@@ -286,16 +307,16 @@ def run_experiments_with_noise(config):
 
 # %%
 # Wrapper for experiments with multiple repeats and heterogeneity settings
-def run_experiments_with_repeats(config):
+def simul_het(config):
     runs = config.runs
     n_iter = config.t
     heterogeneity_settings = config.heterogeneity_settings
     
     methods = {
-        'ind': run_independent_learning,
-        'fedavg': run_federated_averaging,
-        'pcl': run_personalized_collaborative,
-        'pcl_i': run_personalized_collaborative,
+        'ind': il,
+        'fedavg': fedavg,
+        'pcl': pcl,
+        'pcl_i': pcl,
     }
 
     # Initialize error arrays
@@ -341,8 +362,9 @@ def run_experiments_with_repeats(config):
 config = Config()
 
 # Run
-# results = run_experiments_with_noise(config)
-results = run_experiments_with_repeats(config)
+# NOTE: switch results
+results = simul_noise(config)
+# results = simul_het(config)
 
 # Load
 # backup_files = [f for f in os.listdir(config.backup_dir) if f.endswith(".pkl")]
@@ -351,9 +373,9 @@ results = run_experiments_with_repeats(config)
 #     results = pickle.load(f)
 
 # Save
-timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-with open(f"bkup/{timestamp}.pkl", "wb") as f:
-    pickle.dump(results, f)
+# timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+# with open(f"bkup/{timestamp}.pkl", "wb") as f:
+#     pickle.dump(results, f)
 
 
 # %%
@@ -375,28 +397,25 @@ def plot_results_on_axis(ax, results_dict, config, title):
     ax.set_aspect(1./ax.get_data_ratio())
     # ax.grid(True, which="both", ls="--", alpha=0.6)  # grid removed
 
-# fig, axs = plt.subplots(1, 4, figsize=(12, 4))
-# number of rows is number of results divided by 4, rounded up
 fig, axs = plt.subplots(len(results) // 4 + (len(results) % 4 > 0), 4, figsize=(12, 4 * (len(results) // 4 + (len(results) % 4 > 0))), squeeze=False)
 
-# plot_results_on_axis(axs[0], results['homogeneous'], config, 'Homogeneous')
-# plot_results_on_axis(axs[1], results['low'], config, 'Low Heterogeneity')
-# plot_results_on_axis(axs[2], results['medium'], config, 'Medium Heterogeneity')
-# plot_results_on_axis(axs[3], results['high'], config, 'High Heterogeneity')
-# results_dict = {'low': 'Low Heterogeneity', 'medium': 'Medium Heterogeneity', 'high': 'High Heterogeneity'}
-# Noise levels
+# NOTE: switch results
 results_dict = {}
-# results_dict = {0.0: 'No Noise', 0.5: 'Low Noise', 1.0: 'Medium Noise', 5.0: 'High Noise'}
-# for noise in config.noise_a_list:
-#     results_dict[noise] = f'Noise std: {noise}'
-for het_key in results.keys():
-    kernel_het, reward_het = config.heterogeneity_settings[het_key]
-    results_dict[het_key] = f'({round(kernel_het, 1)}, {round(reward_het, 1)})'
+# Basic heterogeneity levels
+# results_dict = {'low': 'Low Heterogeneity', 'medium': 'Medium Heterogeneity', 'high': 'High Heterogeneity'}
+
+# Exhaustive heterogeneity levels
+# for het_key in results.keys():
+#     kernel_het, reward_het = config.heterogeneity_settings[het_key]
+#     results_dict[het_key] = f'({round(kernel_het, 1)}, {round(reward_het, 1)})'
+
+# Noise levels
+for nu in config.nu_list:
+    results_dict[nu] = f'nu: {nu}'
 
 for i, (key, label) in enumerate(results_dict.items()):
     plot_results_on_axis( axs[i//4, i%4], results[key], config, label)
 
-# fig.suptitle('Comparison of Learning Algorithms under Different Heterogeneity Levels', fontsize=18)
 fig.supxlabel('# Samples', fontsize=14, y=0.12)
 fig.supylabel('Mean Squared Error', fontsize=14)
 handles, labels = axs[0,0].get_legend_handles_labels()
