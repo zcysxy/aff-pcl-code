@@ -12,10 +12,10 @@ import os
 class Config:
     """Stores all parameters for the numerical experiment."""
     backup_dir = "bkup"
-    runs = 10
-    n = 20
+    runs = 20
+    n = 40
     d = 5
-    t = 80
+    t = 70
     alpha = 0.01
     base_scale_a = 4
     delta_a = 0.1
@@ -24,18 +24,15 @@ class Config:
     noise_a = 1
     noise_a_list = [0.0, 0.5, 1.0, 2.0]
     # Basic
-    # heterogeneity_settings = {
-    #     'homogeneous': (0.0, 0.0),
-    #     'low': (0.05, 0.05),
-    #     'medium': (0.2, 0.2),
-    #     'high': (0.5, 0.5),
-    # }
+    heterogeneity_settings = {
+        'high': (0.7, 0.7),
+    }
     # Exhaustive
-    heterogeneity_settings = {}
-    for kernel_het in np.linspace(0.0, 0.9, 10):
-        for reward_het in np.linspace(0.0, 0.9, 10):
-            key = f'({kernel_het},{reward_het})'
-            heterogeneity_settings[key] = (kernel_het, reward_het)
+    # heterogeneity_settings = {}
+    # for kernel_het in np.linspace(0.0, 0.9, 10):
+    #     for reward_het in np.linspace(0.0, 0.9, 10):
+    #         key = f'({kernel_het},{reward_het})'
+    #         heterogeneity_settings[key] = (kernel_het, reward_het)
 
 # %%
 # Data Generation for Heterogeneous Systems
@@ -150,7 +147,7 @@ def run_independent_learning(data: dict, config: Config):
             x[i] -= config.alpha * g_t_i
             errors[t, i] = np.linalg.norm(x[i] - data['x_stars'][i])**2
             
-    return np.mean(errors, axis=1)
+    return errors
 
 # %%
 def run_federated_averaging(data: dict, config: Config):
@@ -294,7 +291,8 @@ def run_experiments_with_repeats(config):
     
     methods = {
         'ind': run_independent_learning,
-        'fedavg': run_federated_averaging,
+        'ind_i': run_independent_learning,
+        # 'fedavg': run_federated_averaging,
         'pcl': run_personalized_collaborative,
         'pcl_i': run_personalized_collaborative,
     }
@@ -307,13 +305,12 @@ def run_experiments_with_repeats(config):
 
     def run_all_methods(data, config, run_idx, het_key):
         for method_key, method_func in methods.items():
-            if method_key == 'pcl':
-                _temp_pcl = method_func(data, config)
-                errors[het_key][method_key][run_idx] = np.mean(_temp_pcl, axis=1)
-            elif method_key == 'pcl_i':
-                errors[het_key][method_key][run_idx] = _temp_pcl[:,0]
+            if method_key in ['pcl', 'ind']:
+                _temp_mse = method_func(data, config)
+                # errors[het_key][method_key][run_idx] = np.mean(_temp_pcl, axis=1)
+                errors[het_key][method_key][run_idx] = _temp_mse[:,-1]
             else:
-                errors[het_key][method_key][run_idx] = method_func(data, config)
+                errors[het_key][method_key][run_idx] = _temp_mse[:,0]
 
     for run in range(runs):
         for het_key, (kernel_het, reward_het) in heterogeneity_settings.items():
@@ -343,13 +340,13 @@ config = Config()
 
 # Run
 # results = run_experiments_with_noise(config)
-# results = run_experiments_with_repeats(config)
+results = run_experiments_with_repeats(config)
 
 # Load
-backup_files = [f for f in os.listdir(config.backup_dir) if f.endswith(".pkl")]
-latest_file = max(backup_files, key=lambda x: x.split(".")[0])
-with open(os.path.join(config.backup_dir, latest_file), "rb") as f:
-    results = pickle.load(f)
+# backup_files = [f for f in os.listdir(config.backup_dir) if f.endswith(".pkl")]
+# latest_file = max(backup_files, key=lambda x: x.split(".")[0])
+# with open(os.path.join(config.backup_dir, latest_file), "rb") as f:
+#     results = pickle.load(f)
 
 # Save
 # timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -359,13 +356,13 @@ with open(os.path.join(config.backup_dir, latest_file), "rb") as f:
 
 # %%
 
-def plot_results_on_axis(ax, results_dict, config, title):
+def plot_results_on_axis(ax, results_dict, config, title, keys):
     x = np.arange(config.t)
     for key, label, marker, color in [
-        ('ind', 'Independent', 'o', 'C0'),
-        ('fedavg', 'Federated', '^', 'C1'),  # triangle marker
-        ('pcl', 'Personalized', 'D', 'C2'),
-        ('pcl_i', 'Agent-Specific', 's', 'C3'),  # Changed marker to square ('s') for matplotlib
+        (keys[0], 'Independent', 'o', 'C0'),
+        # ('fedavg', 'Federated', '^', 'C1'),  # triangle marker
+        (keys[1], 'Personalized', 's', 'C3'),
+        # ('pcl_i', 'Agent-Specific', 's', 'C3'),  # Changed marker to square ('s') for matplotlib
         ]:
         mean, std = results_dict[key]
         ax.plot(x, mean, label=label, marker=marker, color=color, markevery=10, markersize=7, markerfacecolor='none')
@@ -378,29 +375,15 @@ def plot_results_on_axis(ax, results_dict, config, title):
 
 # fig, axs = plt.subplots(1, 4, figsize=(12, 4))
 # number of rows is number of results divided by 4, rounded up
-fig, axs = plt.subplots(len(results) // 4 + (len(results) % 4 > 0), 4, figsize=(12, 4 * (len(results) // 4 + (len(results) % 4 > 0))), squeeze=False)
+fig, axs = plt.subplots(1, 2, figsize=(6, 4))
 
-# plot_results_on_axis(axs[0], results['homogeneous'], config, 'Homogeneous')
-# plot_results_on_axis(axs[1], results['low'], config, 'Low Heterogeneity')
-# plot_results_on_axis(axs[2], results['medium'], config, 'Medium Heterogeneity')
-# plot_results_on_axis(axs[3], results['high'], config, 'High Heterogeneity')
-# results_dict = {'low': 'Low Heterogeneity', 'medium': 'Medium Heterogeneity', 'high': 'High Heterogeneity'}
-# Noise levels
-results_dict = {}
-# results_dict = {0.0: 'No Noise', 0.5: 'Low Noise', 1.0: 'Medium Noise', 5.0: 'High Noise'}
-# for noise in config.noise_a_list:
-#     results_dict[noise] = f'Noise std: {noise}'
-for het_key in results.keys():
-    kernel_het, reward_het = config.heterogeneity_settings[het_key]
-    results_dict[het_key] = f'({round(kernel_het, 1)}, {round(reward_het, 1)})'
-
-for i, (key, label) in enumerate(results_dict.items()):
-    plot_results_on_axis( axs[i//4, i%4], results[key], config, label)
+plot_results_on_axis(axs[0], results['high'], config, 'General agent', ('ind', 'pcl'))
+plot_results_on_axis(axs[1], results['high'], config, 'Agent close to center', ('ind_i', 'pcl_i'))
 
 # fig.suptitle('Comparison of Learning Algorithms under Different Heterogeneity Levels', fontsize=18)
 fig.supxlabel('# Samples', fontsize=14, y=0.12)
 fig.supylabel('Mean Squared Error', fontsize=14)
-handles, labels = axs[0,0].get_legend_handles_labels()
+handles, labels = axs[0].get_legend_handles_labels()
 fig.legend(handles, labels, loc='lower center', ncol=len(results), fontsize=14, frameon=False)
 plt.tight_layout(rect=[0, 0.03, 1, 0.94])
 # plt.show()
@@ -471,9 +454,9 @@ def plot_heatmap(table, index=2):
     plt.tight_layout()
     return fig
 
-summary_table = compute_summary_table(results, config)
-# truncated_table = summary_table[:9, :9, :]  # For a 4x4 heatmap
-for index in range(2,4):
-    fig = plot_heatmap(summary_table, index)
-    fig.savefig(f"fig/heatmap_{index}.png", dpi=300)
+# summary_table = compute_summary_table(results, config)
+# # truncated_table = summary_table[:9, :9, :]  # For a 4x4 heatmap
+# for index in range(2,4):
+#     fig = plot_heatmap(summary_table, index)
+#     fig.savefig(f"fig/heatmap_{index}.png", dpi=300)
 
