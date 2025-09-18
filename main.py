@@ -343,13 +343,13 @@ config = Config()
 
 # Run
 # results = run_experiments_with_noise(config)
-results = run_experiments_with_repeats(config)
+# results = run_experiments_with_repeats(config)
 
 # Load
-# backup_files = [f for f in os.listdir(config.backup_dir) if f.endswith(".pkl")]
-# latest_file = max(backup_files, key=lambda x: x.split(".")[0])
-# with open(os.path.join(config.backup_dir, latest_file), "rb") as f:
-#     results = pickle.load(f)
+backup_files = [f for f in os.listdir(config.backup_dir) if f.endswith("comp.pkl")]
+latest_file = max(backup_files, key=lambda x: x.split(".")[0])
+with open(os.path.join(config.backup_dir, latest_file), "rb") as f:
+    results = pickle.load(f)
 
 # Save
 # timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -364,8 +364,8 @@ def plot_results_on_axis(ax, results_dict, config, title):
     for key, label, marker, color in [
         ('ind', 'Independent', 'o', 'C0'),
         ('fedavg', 'Federated', '^', 'C1'),  # triangle marker
-        ('pcl', 'Personalized', 'D', 'C2'),
-        ('pcl_i', 'Agent-Specific', 's', 'C3'),  # Changed marker to square ('s') for matplotlib
+        ('pcl', 'PCL', 'D', 'C2'),
+        ('pcl_i', 'Agent-specific PCL', 's', 'C3'),  # Changed marker to square ('s') for matplotlib
         ]:
         mean, std = results_dict[key]
         ax.plot(x, mean, label=label, marker=marker, color=color, markevery=10, markersize=7, markerfacecolor='none')
