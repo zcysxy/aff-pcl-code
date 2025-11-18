@@ -22,13 +22,14 @@ class Config:
     delta_b = 0.1
     noise_b = 0.5
     noise_a = 1
+    lamda = 15.0
     noise_a_list = [0.0, 0.5, 1.0, 2.0]
     # Basic
     heterogeneity_settings = {
         'homogeneous': (0.0, 0.0),
         # 'low': (0.05, 0.05),
         'medium': (0.3, 0.3),
-        'high': (0.8, 0.8),
+        # 'high': (0.8, 0.8),
     }
     # Exhaustive
     # heterogeneity_settings = {}
@@ -293,16 +294,50 @@ def run_scaffold(data: dict, config: Config):
     return np.mean(errors, axis=1)
 
 # %%
+def run_pfedme(data: dict, config: Config):
+    """Baseline 4: pFedMe."""
+    print("Running pFedMe...")
+    # Personalized models for each agent
+    x = [np.zeros(config.d) for _ in range(config.n)]
+    # Global model
+    x_global = np.zeros(config.d)
+    
+    errors = np.zeros((config.t, config.n))
+
+    for t in range(config.t):
+        x_global_t = x_global.copy()
+        
+        # Local client updates
+        for i in range(config.n):
+            s_t_i = data['distributions'][i].rvs()
+            
+            # Gradient at the client's current personalized model
+            grad_i = data['A_func'](s_t_i) @ x[i] - data['b_func'](s_t_i, data['thetas_star'][i])
+            
+            # pFedMe update rule
+            regularization_term = config.lamda * (x[i] - x_global_t)
+            x[i] -= config.alpha * (grad_i + regularization_term)
+            
+            errors[t, i] = np.linalg.norm(x[i] - data['x_stars'][i])**2
+
+        # Update global model by averaging client models
+        x_global = np.mean(x, axis=0)
+
+    return errors
+
+# %%
 # Wrapper for experiments with varying noise_a and fixed heterogeneity
 def run_experiments_with_noise(config):
     runs = config.runs
     n_iter = config.t
     methods = {
-        # 'ind': run_independent_learning,
+        'ind': run_independent_learning,
         'fedavg': run_federated_averaging,
         'scaffold': run_scaffold,
         'pcl': run_personalized_collaborative,
-        'pcl_i': run_personalized_collaborative,
+        # 'pcl_i': run_personalized_collaborative,
+        'pfedme': run_pfedme,
+        # 'pfedme_i': run_pfedme,
     }
     noise_a_list = config.noise_a_list
 
@@ -316,12 +351,22 @@ def run_experiments_with_noise(config):
         errors = {method: np.zeros((runs, n_iter)) for method in methods}
 
         def run_all_methods(data, config, run_idx):
+            # Cache results for personalized methods to avoid re-running
+            _temp_results = {}
             for method_key, method_func in methods.items():
-                if method_key == 'pcl':
-                    _temp_pcl = method_func(data, config)
-                    errors[method_key][run_idx] = np.mean(_temp_pcl, axis=1)
-                elif method_key == 'pcl_i':
-                    errors[method_key][run_idx] = _temp_pcl[:,0]
+                # For personalized methods that return per-agent errors
+                if method_key in ['pcl', 'pfedme']:
+                    if method_key not in _temp_results:
+                        _temp_results[method_key] = method_func(data, config)
+                    errors[method_key][run_idx] = np.mean(_temp_results[method_key], axis=1)
+                elif method_key in ['pcl_i', 'pfedme_i']:
+                    base_method = method_key.replace('_i', '')
+                    if base_method not in _temp_results:
+                        # Find the corresponding base method function
+                        base_method_func = list(set(m for k, m in methods.items() if k.startswith(base_method)))[0]
+                        _temp_results[base_method] = base_method_func(data, config)
+                    errors[method_key][run_idx] = _temp_results[base_method][:,0]
+                # For non-personalized methods
                 else:
                     errors[method_key][run_idx] = method_func(data, config)
 
@@ -353,6 +398,8 @@ def run_experiments_with_repeats(config):
         'scaffold': run_scaffold,
         'pcl': run_personalized_collaborative,
         'pcl_i': run_personalized_collaborative,
+        'pfedme': run_pfedme,
+        'pfedme_i': run_pfedme,
     }
 
     # Initialize error arrays
@@ -362,14 +409,25 @@ def run_experiments_with_repeats(config):
     }
 
     def run_all_methods(data, config, run_idx, het_key):
+        # Cache results for personalized methods to avoid re-running
+        _temp_results = {}
         for method_key, method_func in methods.items():
-            if method_key == 'pcl':
-                _temp_pcl = method_func(data, config)
-                errors[het_key][method_key][run_idx] = np.mean(_temp_pcl, axis=1)
-            elif method_key == 'pcl_i':
-                errors[het_key][method_key][run_idx] = _temp_pcl[:,0]
+            # For personalized methods that return per-agent errors
+            if method_key in ['pcl', 'pfedme']:
+                if method_key not in _temp_results:
+                    _temp_results[method_key] = method_func(data, config)
+                errors[het_key][method_key][run_idx] = np.mean(_temp_results[method_key], axis=1)
+            elif method_key in ['pcl_i', 'pfedme_i']:
+                base_method = method_key.replace('_i', '')
+                if base_method not in _temp_results:
+                    # Find the corresponding base method function
+                    base_method_func = list(set(m for k, m in methods.items() if k.startswith(base_method)))[0]
+                    _temp_results[base_method] = base_method_func(data, config)
+                errors[het_key][method_key][run_idx] = _temp_results[base_method][:,0]
+            # For non-personalized methods
             else:
-                errors[het_key][method_key][run_idx] = method_func(data, config)
+                if method_key in errors[het_key]:
+                    errors[het_key][method_key][run_idx] = method_func(data, config)
 
     for run in range(runs):
         for het_key, (kernel_het, reward_het) in heterogeneity_settings.items():
@@ -386,7 +444,7 @@ def run_experiments_with_repeats(config):
                 errors[het][method].mean(axis=0),
                 errors[het][method].std(axis=0)
             )
-            for method in methods
+            for method in methods if method in errors[het]
         }
         for het in heterogeneity_settings
     }
@@ -423,6 +481,8 @@ def plot_results_on_axis(ax, results_dict, config, title):
         ('scaffold', 'SCAFFOLD', '*', 'C4'),
         ('pcl', 'PCL', 'D', 'C2'),
         ('pcl_i', 'Agent-specific PCL', 's', 'C3'),  # Changed marker to square ('s') for matplotlib
+        ('pfedme', 'pFedMe', 'P', 'C5'),
+        ('pfedme_i', 'Agent-specific pFedMe', 'X', 'C6'),
         ]:
         if key in results_dict:
             mean, std = results_dict[key]
