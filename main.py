@@ -12,7 +12,7 @@ import os
 class Config:
     """Stores all parameters for the numerical experiment."""
     backup_dir = "bkup"
-    runs = 10
+    runs = 3
     n = 20
     d = 5
     t = 60
@@ -26,7 +26,7 @@ class Config:
     # Basic
     heterogeneity_settings = {
         'homogeneous': (0.0, 0.0),
-        'low': (0.05, 0.05),
+        # 'low': (0.05, 0.05),
         'medium': (0.3, 0.3),
         'high': (0.8, 0.8),
     }
@@ -239,13 +239,68 @@ def run_personalized_collaborative(data: dict, config: Config):
     return errors
 
 # %%
+def run_scaffold(data: dict, config: Config):
+    """Baseline 3: SCAFFOLD."""
+    print("Running SCAFFOLD...")
+    x = np.zeros(config.d)  # Server model
+    c = np.zeros(config.d)  # Server control variate
+    
+    # Client-side state
+    ci = [np.zeros(config.d) for _ in range(config.n)] # Client control variates
+    
+    errors = np.zeros((config.t, config.n))
+    
+    K = 1 # Number of local steps, matching other algorithms
+    eta_l = config.alpha # Local learning rate
+
+    for t in range(config.t):
+        x_t = x.copy()
+        
+        delta_y_agg = np.zeros(config.d)
+        delta_c_agg = np.zeros(config.d)
+
+        for i in range(config.n):
+            s_t_i = data['distributions'][i].rvs()
+            
+            # Client update
+            y_i = x_t.copy()
+            
+            # Local step(s). K=1 for this implementation.
+            grad_i = data['A_func'](s_t_i) @ y_i - data['b_func'](s_t_i, data['thetas_star'][i])
+            y_i -= eta_l * (grad_i - ci[i] + c)
+
+            # Update client control variate (Option II from paper)
+            c_new_i = ci[i] - c + (x_t - y_i) / (K * eta_l)
+
+            # Deltas for aggregation
+            delta_y_i = y_i - x_t
+            delta_c_i = c_new_i - ci[i]
+            
+            delta_y_agg += delta_y_i
+            delta_c_agg += delta_c_i
+            
+            # Update client state for next round
+            ci[i] = c_new_i
+
+        # Server update (ηg = 1 as per paper's experiments)
+        x += delta_y_agg / config.n
+        c += delta_c_agg / config.n
+        
+        # NOTE: Measure error of the single GLOBAL model against each agent's personal optimum
+        for i in range(config.n):
+            errors[t, i] = np.linalg.norm(x - data['x_stars'][i])**2
+            
+    return np.mean(errors, axis=1)
+
+# %%
 # Wrapper for experiments with varying noise_a and fixed heterogeneity
 def run_experiments_with_noise(config):
     runs = config.runs
     n_iter = config.t
     methods = {
-        'ind': run_independent_learning,
+        # 'ind': run_independent_learning,
         'fedavg': run_federated_averaging,
+        'scaffold': run_scaffold,
         'pcl': run_personalized_collaborative,
         'pcl_i': run_personalized_collaborative,
     }
@@ -295,6 +350,7 @@ def run_experiments_with_repeats(config):
     methods = {
         'ind': run_independent_learning,
         'fedavg': run_federated_averaging,
+        'scaffold': run_scaffold,
         'pcl': run_personalized_collaborative,
         'pcl_i': run_personalized_collaborative,
     }
@@ -343,13 +399,13 @@ config = Config()
 
 # Run
 # results = run_experiments_with_noise(config)
-# results = run_experiments_with_repeats(config)
+results = run_experiments_with_repeats(config)
 
 # Load
-backup_files = [f for f in os.listdir(config.backup_dir) if f.endswith("comp.pkl")]
-latest_file = max(backup_files, key=lambda x: x.split(".")[0])
-with open(os.path.join(config.backup_dir, latest_file), "rb") as f:
-    results = pickle.load(f)
+# backup_files = [f for f in os.listdir(config.backup_dir) if f.endswith("comp.pkl")]
+# latest_file = max(backup_files, key=lambda x: x.split(".")[0])
+# with open(os.path.join(config.backup_dir, latest_file), "rb") as f:
+#     results = pickle.load(f)
 
 # Save
 # timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -364,12 +420,14 @@ def plot_results_on_axis(ax, results_dict, config, title):
     for key, label, marker, color in [
         ('ind', 'Independent', 'o', 'C0'),
         ('fedavg', 'Federated', '^', 'C1'),  # triangle marker
+        ('scaffold', 'SCAFFOLD', '*', 'C4'),
         ('pcl', 'PCL', 'D', 'C2'),
         ('pcl_i', 'Agent-specific PCL', 's', 'C3'),  # Changed marker to square ('s') for matplotlib
         ]:
-        mean, std = results_dict[key]
-        ax.plot(x, mean, label=label, marker=marker, color=color, markevery=10, markersize=7, markerfacecolor='none')
-        ax.fill_between(x, mean-1.64*std/np.sqrt(config.runs), mean+1.64*std/np.sqrt(config.runs), color=color, alpha=0.2)
+        if key in results_dict:
+            mean, std = results_dict[key]
+            ax.plot(x, mean, label=label, marker=marker, color=color, markevery=10, markersize=7, markerfacecolor='none')
+            ax.fill_between(x, mean-1.64*std/np.sqrt(config.runs), mean+1.64*std/np.sqrt(config.runs), color=color, alpha=0.2)
     ax.set_title(title, fontsize=14)
     ax.set_yscale('log')
     ax.tick_params(axis='both', which='both', length=0)
