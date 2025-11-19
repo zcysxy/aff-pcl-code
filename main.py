@@ -12,7 +12,7 @@ import os
 class Config:
     """Stores all parameters for the numerical experiment."""
     backup_dir = "bkup"
-    runs = 10
+    runs = 3
     n = 20
     d = 5
     t = 60
@@ -22,6 +22,11 @@ class Config:
     delta_b = 0.1
     noise_b = 0.5
     noise_a = 1
+    lamda = 15.0
+    num_clusters = 10
+    init_cluster = 1e-2
+    exact_assign = True
+    pretrain_ratio = 0.5
     noise_a_list = [0.0, 0.5, 1.0, 2.0]
     # Basic
     heterogeneity_settings = {
@@ -108,12 +113,16 @@ def generate_synthetic_data(config: Config):
     print("Calculating ground truth solutions via Monte Carlo...")
     n_samples_mc = 5000
     x_stars = []
+    A_bar_list = []
+    b_bar_list = []
     for i in range(config.n):
         samples = distributions[i].rvs(size=n_samples_mc)
         A_bar_i = np.mean([A_func(s) for s in samples], axis=0)
         b_bar_i = np.mean([b_func(s,thetas_star[i]) for s in samples], axis=0)
         x_star_i = np.linalg.solve(A_bar_i, b_bar_i)
         x_stars.append(x_star_i)
+        A_bar_list.append(A_bar_i)
+        b_bar_list.append(b_bar_i)
 
     # Define density ratio function rho^i(s)
     # rho^i(s) = mu^i(s) / mu^0(s), where mu^0 = (1/n) * sum(mu^j)
@@ -130,6 +139,8 @@ def generate_synthetic_data(config: Config):
         'thetas_star': thetas_star,
         'x_stars': x_stars,
         'rho_func': rho_func,
+        'A_bar_list': A_bar_list,
+        'b_bar_list': b_bar_list,
     }
     print("Data generation complete.")
     return data
@@ -239,51 +250,225 @@ def run_personalized_collaborative(data: dict, config: Config):
     return errors
 
 # %%
-# Wrapper for experiments with varying noise_a and fixed heterogeneity
-def run_experiments_with_noise(config):
-    runs = config.runs
-    n_iter = config.t
-    methods = {
-        'ind': run_independent_learning,
-        'fedavg': run_federated_averaging,
-        'pcl': run_personalized_collaborative,
-        'pcl_i': run_personalized_collaborative,
-    }
-    noise_a_list = config.noise_a_list
+def run_scaffold(data: dict, config: Config):
+    """Baseline 3: SCAFFOLD."""
+    print("Running SCAFFOLD...")
+    x = np.zeros(config.d)  # Server model
+    c = np.zeros(config.d)  # Server control variate
+    
+    # Client-side state
+    ci = [np.zeros(config.d) for _ in range(config.n)] # Client control variates
+    
+    errors = np.zeros((config.t, config.n))
+    
+    K = 1 # Number of local steps, matching other algorithms
+    eta_l = config.alpha # Local learning rate
 
-    # Results: noise -> method -> (mean, std)
-    results = {}
-    for noise_a in noise_a_list:
-        print(f"\n=== Running for noise_a={noise_a}")
-        config.noise_a = noise_a
-        # Regularize learning rate by exp(-noise/2)
-        # config.alpha = 0.01 * np.exp(-noise_a)
-        errors = {method: np.zeros((runs, n_iter)) for method in methods}
+    for t in range(config.t):
+        x_t = x.copy()
+        
+        delta_y_agg = np.zeros(config.d)
+        delta_c_agg = np.zeros(config.d)
 
-        def run_all_methods(data, config, run_idx):
-            for method_key, method_func in methods.items():
-                if method_key == 'pcl':
-                    _temp_pcl = method_func(data, config)
-                    errors[method_key][run_idx] = np.mean(_temp_pcl, axis=1)
-                elif method_key == 'pcl_i':
-                    errors[method_key][run_idx] = _temp_pcl[:,0]
-                else:
-                    errors[method_key][run_idx] = method_func(data, config)
+        for i in range(config.n):
+            s_t_i = data['distributions'][i].rvs()
+            
+            # Client update
+            y_i = x_t.copy()
+            
+            # Local step(s). K=1 for this implementation.
+            grad_i = data['A_func'](s_t_i) @ y_i - data['b_func'](s_t_i, data['thetas_star'][i])
+            y_i -= eta_l * (grad_i - ci[i] + c)
 
-        for run in range(runs):
-            print(f"Run {run+1}/{runs}")
-            data = generate_synthetic_data(config)
-            run_all_methods(data, config, run)
+            # Update client control variate (Option II from paper)
+            c_new_i = ci[i] - c + (x_t - y_i) / (K * eta_l)
 
-        # Compute mean and std
-        results[noise_a] = {
-            method: (
-                errors[method].mean(axis=0),
-                errors[method].std(axis=0)
-            )
-            for method in methods
-        }
-    return results
+            # Deltas for aggregation
+            delta_y_i = y_i - x_t
+            delta_c_i = c_new_i - ci[i]
+            
+            delta_y_agg += delta_y_i
+            delta_c_agg += delta_c_i
+            
+            # Update client state for next round
+            ci[i] = c_new_i
+
+        # Server update (ηg = 1 as per paper's experiments)
+        x += delta_y_agg / config.n
+        c += delta_c_agg / config.n
+        
+        # NOTE: Measure error of the single GLOBAL model against each agent's personal optimum
+        for i in range(config.n):
+            errors[t, i] = np.linalg.norm(x - data['x_stars'][i])**2
+            
+    return np.mean(errors, axis=1)
+
+# %%
+def run_pfedme(data: dict, config: Config):
+    """Baseline 4: pFedMe."""
+    print("Running pFedMe...")
+    # Personalized models for each agent
+    x = [np.zeros(config.d) for _ in range(config.n)]
+    # Global model
+    x_global = np.zeros(config.d)
+    
+    errors = np.zeros((config.t, config.n))
+
+    for t in range(config.t):
+        x_global_t = x_global.copy()
+        
+        # Local client updates
+        for i in range(config.n):
+            s_t_i = data['distributions'][i].rvs()
+            
+            # Gradient at the client's current personalized model
+            grad_i = data['A_func'](s_t_i) @ x[i] - data['b_func'](s_t_i, data['thetas_star'][i])
+            
+            # pFedMe update rule
+            regularization_term = config.lamda * (x[i] - x_global_t)
+            x[i] -= config.alpha * (grad_i + regularization_term)
+            
+            errors[t, i] = np.linalg.norm(x[i] - data['x_stars'][i])**2
+
+        # Update global model by averaging client models
+        x_global = np.mean(x, axis=0)
+
+    return errors
+
+# %%
+def run_ditto(data: dict, config: Config):
+    """Baseline 5: Ditto."""
+    print("Running Ditto...")
+    # Personalized models for each agent
+    v = [np.zeros(config.d) for _ in range(config.n)]
+    # Global model
+    w = np.zeros(config.d)
+    
+    errors = np.zeros((config.t, config.n))
+
+    for t in range(config.t):
+        w_t = w.copy()
+        grad_agg = np.zeros(config.d)
+        samples = [data['distributions'][i].rvs() for i in range(config.n)]
+
+        # Global model update (one round of FedAvg)
+        for i in range(config.n):
+            s_t_i = samples[i]
+            g_global_i = data['A_func'](s_t_i) @ w_t - data['b_func'](s_t_i, data['thetas_star'][i])
+            grad_agg += g_global_i
+        w = w_t - config.alpha * (grad_agg / config.n)
+
+        # Personalized model update
+        for i in range(config.n):
+            s_t_i = samples[i]
+            # Gradient at the client's current personalized model
+            g_local_i = data['A_func'](s_t_i) @ v[i] - data['b_func'](s_t_i, data['thetas_star'][i])
+            
+            # Ditto update rule
+            regularization_term = config.lamda * (v[i] - w)
+            v[i] -= config.alpha * (g_local_i + regularization_term)
+            
+            errors[t, i] = np.linalg.norm(v[i] - data['x_stars'][i])**2
+            
+    return errors
+
+# %%
+def run_cluster(data: dict, config: Config):
+    """Baseline 6: IFCA (Clustering)."""
+    print("Running Cluster (IFCA)...")
+    K = config.num_clusters
+    # Initialize with small random noise to break symmetry
+    cluster_models = [np.random.randn(config.d) * config.init_cluster for _ in range(K)]
+    errors = np.zeros((config.t, config.n))
+
+    for t in range(config.t):
+        samples = [data['distributions'][i].rvs() for i in range(config.n)]
+        
+        # 1. Cluster Assignment
+        client_clusters = np.zeros(config.n, dtype=int)
+        if config.exact_assign:
+            # Use exact expected loss for assignment
+            A_bar_list = data['A_bar_list']
+            b_bar_list = data['b_bar_list']
+            for i in range(config.n):
+                losses = []
+                for j in range(K):
+                    w_j = cluster_models[j]
+                    A_bar_i = A_bar_list[i]
+                    b_bar_i = b_bar_list[i]
+                    # loss = 0.5 * np.dot(w_j, A_bar_i @ w_j) - np.dot(b_bar_i, w_j)
+                    # Use MSE as loss
+                    loss = np.linalg.norm(A_bar_i @ w_j - b_bar_i)**2
+                    losses.append(loss)
+                client_clusters[i] = np.argmin(losses)
+        else:
+            # Use stochastic loss approximation for assignment
+            for i in range(config.n):
+                s_t_i = samples[i]
+                losses = []
+                for j in range(K):
+                    w_j = cluster_models[j]
+                    loss = 0.5 * np.dot(w_j, data['A_func'](s_t_i) @ w_j) - \
+                           np.dot(data['b_func'](s_t_i, data['thetas_star'][i]), w_j)
+                losses.append(loss)
+            client_clusters[i] = np.argmin(losses)
+
+        # 2. Gradient Calculation and Aggregation
+        cluster_grads = [[] for _ in range(K)]
+        for i in range(config.n):
+            s_t_i = samples[i]
+            chosen_cluster_idx = client_clusters[i]
+            chosen_model = cluster_models[chosen_cluster_idx]
+            
+            grad = data['A_func'](s_t_i) @ chosen_model - data['b_func'](s_t_i, data['thetas_star'][i])
+            cluster_grads[chosen_cluster_idx].append(grad)
+            
+        # 3. Cluster Model Update
+        for j in range(K):
+            if cluster_grads[j]:
+                avg_grad = np.mean(cluster_grads[j], axis=0)
+                cluster_models[j] -= config.alpha * avg_grad
+
+        # 4. Error Calculation
+        for i in range(config.n):
+            model_for_client = cluster_models[client_clusters[i]]
+            errors[t, i] = np.linalg.norm(model_for_client - data['x_stars'][i])**2
+            
+    return np.mean(errors, axis=1)
+
+# %%
+def run_finetune(data: dict, config: Config):
+    """Baseline 7: FedAvg then Fine-tune."""
+    print("Running Fine-tune...")
+    
+    pretrain_steps = int(config.t * config.pretrain_ratio)
+    
+    fedavg_model = np.zeros(config.d)
+    errors = np.zeros((config.t, config.n))
+
+    # Phase 1: FedAvg Pre-training
+    for t in range(pretrain_steps):
+        grad_agg = np.zeros(config.d)
+        for i in range(config.n):
+            s_t_i = data['distributions'][i].rvs()
+            g_t_i = data['A_func'](s_t_i) @ fedavg_model - data['b_func'](s_t_i, data['thetas_star'][i])
+            grad_agg += g_t_i
+        
+        fedavg_model -= config.alpha * (grad_agg / config.n)
+        
+        for i in range(config.n):
+            errors[t, i] = np.linalg.norm(fedavg_model - data['x_stars'][i])**2
+
+    # Phase 2: Independent Fine-tuning
+    personalized_models = [fedavg_model.copy() for _ in range(config.n)]
+    for t in range(pretrain_steps, config.t):
+        for i in range(config.n):
+            s_t_i = data['distributions'][i].rvs()
+            grad_i = data['A_func'](s_t_i) @ personalized_models[i] - data['b_func'](s_t_i, data['thetas_star'][i])
+            personalized_models[i] -= config.alpha * grad_i
+            errors[t, i] = np.linalg.norm(personalized_models[i] - data['x_stars'][i])**2
+            
+    return np.mean(errors, axis=1)
 
 # %%
 # Wrapper for experiments with multiple repeats and heterogeneity settings
@@ -295,8 +480,15 @@ def run_experiments_with_repeats(config):
     methods = {
         'ind': run_independent_learning,
         'fedavg': run_federated_averaging,
+        'scaffold': run_scaffold,
         'pcl': run_personalized_collaborative,
-        'pcl_i': run_personalized_collaborative,
+        # 'pcl_i': run_personalized_collaborative,
+        'pfedme': run_pfedme,
+        # 'pfedme_i': run_pfedme,
+        'ditto': run_ditto,
+        # 'ditto_i': run_ditto,
+        'cluster': run_cluster,
+        'finetune': run_finetune,
     }
 
     # Initialize error arrays
@@ -306,14 +498,25 @@ def run_experiments_with_repeats(config):
     }
 
     def run_all_methods(data, config, run_idx, het_key):
+        # Cache results for personalized methods to avoid re-running
+        _temp_results = {}
         for method_key, method_func in methods.items():
-            if method_key == 'pcl':
-                _temp_pcl = method_func(data, config)
-                errors[het_key][method_key][run_idx] = np.mean(_temp_pcl, axis=1)
-            elif method_key == 'pcl_i':
-                errors[het_key][method_key][run_idx] = _temp_pcl[:,0]
+            # For personalized methods that return per-agent errors
+            if method_key in ['pcl', 'pfedme', 'ditto']:
+                if method_key not in _temp_results:
+                    _temp_results[method_key] = method_func(data, config)
+                errors[het_key][method_key][run_idx] = np.mean(_temp_results[method_key], axis=1)
+            elif method_key in ['pcl_i', 'pfedme_i', 'ditto_i']:
+                base_method = method_key.replace('_i', '')
+                if base_method not in _temp_results:
+                    # Find the corresponding base method function
+                    base_method_func = list(set(m for k, m in methods.items() if k.startswith(base_method)))[0]
+                    _temp_results[base_method] = base_method_func(data, config)
+                errors[het_key][method_key][run_idx] = _temp_results[base_method][:,0]
+            # For non-personalized methods
             else:
-                errors[het_key][method_key][run_idx] = method_func(data, config)
+                if method_key in errors[het_key]:
+                    errors[het_key][method_key][run_idx] = method_func(data, config)
 
     for run in range(runs):
         for het_key, (kernel_het, reward_het) in heterogeneity_settings.items():
@@ -330,7 +533,7 @@ def run_experiments_with_repeats(config):
                 errors[het][method].mean(axis=0),
                 errors[het][method].std(axis=0)
             )
-            for method in methods
+            for method in methods if method in errors[het]
         }
         for het in heterogeneity_settings
     }
@@ -343,13 +546,13 @@ config = Config()
 
 # Run
 # results = run_experiments_with_noise(config)
-# results = run_experiments_with_repeats(config)
+results = run_experiments_with_repeats(config)
 
 # Load
-backup_files = [f for f in os.listdir(config.backup_dir) if f.endswith("comp.pkl")]
-latest_file = max(backup_files, key=lambda x: x.split(".")[0])
-with open(os.path.join(config.backup_dir, latest_file), "rb") as f:
-    results = pickle.load(f)
+# backup_files = [f for f in os.listdir(config.backup_dir) if f.endswith("comp.pkl")]
+# latest_file = max(backup_files, key=lambda x: x.split(".")[0])
+# with open(os.path.join(config.backup_dir, latest_file), "rb") as f:
+#     results = pickle.load(f)
 
 # Save
 # timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -364,12 +567,20 @@ def plot_results_on_axis(ax, results_dict, config, title):
     for key, label, marker, color in [
         ('ind', 'Independent', 'o', 'C0'),
         ('fedavg', 'Federated', '^', 'C1'),  # triangle marker
+        ('scaffold', 'SCAFFOLD', '*', 'C4'),
         ('pcl', 'PCL', 'D', 'C2'),
         ('pcl_i', 'Agent-specific PCL', 's', 'C3'),  # Changed marker to square ('s') for matplotlib
+        ('pfedme', 'pFedMe', 'P', 'C5'),
+        ('pfedme_i', 'Agent-specific pFedMe', 'X', 'C6'),
+        ('ditto', 'Ditto', 'v', 'C7'),
+        ('ditto_i', 'Agent-specific Ditto', '<', 'C8'),
+        ('cluster', 'Clustered FL', '>', 'C9'),
+        ('finetune', 'Fine-tune', 'd', 'C0'),
         ]:
-        mean, std = results_dict[key]
-        ax.plot(x, mean, label=label, marker=marker, color=color, markevery=10, markersize=7, markerfacecolor='none')
-        ax.fill_between(x, mean-1.64*std/np.sqrt(config.runs), mean+1.64*std/np.sqrt(config.runs), color=color, alpha=0.2)
+        if key in results_dict:
+            mean, std = results_dict[key]
+            ax.plot(x, mean, label=label, marker=marker, color=color, markevery=10, markersize=7, markerfacecolor='none')
+            ax.fill_between(x, mean-1.64*std/np.sqrt(config.runs), mean+1.64*std/np.sqrt(config.runs), color=color, alpha=0.2)
     ax.set_title(title, fontsize=14)
     ax.set_yscale('log')
     ax.tick_params(axis='both', which='both', length=0)
@@ -410,10 +621,10 @@ for i, (key, label) in enumerate(results_dict.items()):
 fig.supxlabel('# Samples', fontsize=14, y=0.12)
 fig.supylabel('Mean Squared Error', fontsize=14)
 handles, labels = axs[0,0].get_legend_handles_labels()
-fig.legend(handles, labels, loc='lower center', ncol=len(results), fontsize=14, frameon=False)
+fig.legend(handles, labels, loc='lower center', ncol=len(results), fontsize=14, frameon=False, bbox_to_anchor=(0.5, -0.2))
 plt.tight_layout(rect=[0, 0.03, 1, 0.94])
 # plt.show()
-fig.savefig("fig/comp.png", dpi=300)
+# fig.savefig("fig/comp.png", dpi=300)
 
 # %%
 # Summary table
