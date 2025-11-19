@@ -23,13 +23,16 @@ class Config:
     noise_b = 0.5
     noise_a = 1
     lamda = 15.0
+    num_clusters = 10
+    init_cluster = 1e-2
+    exact_assign = True
     noise_a_list = [0.0, 0.5, 1.0, 2.0]
     # Basic
     heterogeneity_settings = {
         'homogeneous': (0.0, 0.0),
         # 'low': (0.05, 0.05),
         'medium': (0.3, 0.3),
-        # 'high': (0.8, 0.8),
+        'high': (0.8, 0.8),
     }
     # Exhaustive
     # heterogeneity_settings = {}
@@ -109,12 +112,16 @@ def generate_synthetic_data(config: Config):
     print("Calculating ground truth solutions via Monte Carlo...")
     n_samples_mc = 5000
     x_stars = []
+    A_bar_list = []
+    b_bar_list = []
     for i in range(config.n):
         samples = distributions[i].rvs(size=n_samples_mc)
         A_bar_i = np.mean([A_func(s) for s in samples], axis=0)
         b_bar_i = np.mean([b_func(s,thetas_star[i]) for s in samples], axis=0)
         x_star_i = np.linalg.solve(A_bar_i, b_bar_i)
         x_stars.append(x_star_i)
+        A_bar_list.append(A_bar_i)
+        b_bar_list.append(b_bar_i)
 
     # Define density ratio function rho^i(s)
     # rho^i(s) = mu^i(s) / mu^0(s), where mu^0 = (1/n) * sum(mu^j)
@@ -131,6 +138,8 @@ def generate_synthetic_data(config: Config):
         'thetas_star': thetas_star,
         'x_stars': x_stars,
         'rho_func': rho_func,
+        'A_bar_list': A_bar_list,
+        'b_bar_list': b_bar_list,
     }
     print("Data generation complete.")
     return data
@@ -363,66 +372,68 @@ def run_ditto(data: dict, config: Config):
     return errors
 
 # %%
-# Wrapper for experiments with varying noise_a and fixed heterogeneity
-def run_experiments_with_noise(config):
-    runs = config.runs
-    n_iter = config.t
-    methods = {
-        'ind': run_independent_learning,
-        'fedavg': run_federated_averaging,
-        # 'scaffold': run_scaffold,
-        'pcl': run_personalized_collaborative,
-        # 'pcl_i': run_personalized_collaborative,
-        'pfedme': run_pfedme,
-        # 'pfedme_i': run_pfedme,
-        'ditto': run_ditto,
-        # 'ditto_i': run_ditto,
-    }
-    noise_a_list = config.noise_a_list
+def run_cluster(data: dict, config: Config):
+    """Baseline 6: IFCA (Clustering)."""
+    print("Running Cluster (IFCA)...")
+    K = config.num_clusters
+    # Initialize with small random noise to break symmetry
+    cluster_models = [np.random.randn(config.d) * config.init_cluster for _ in range(K)]
+    errors = np.zeros((config.t, config.n))
 
-    # Results: noise -> method -> (mean, std)
-    results = {}
-    for noise_a in noise_a_list:
-        print(f"\n=== Running for noise_a={noise_a}")
-        config.noise_a = noise_a
-        # Regularize learning rate by exp(-noise/2)
-        # config.alpha = 0.01 * np.exp(-noise_a)
-        errors = {method: np.zeros((runs, n_iter)) for method in methods}
+    for t in range(config.t):
+        samples = [data['distributions'][i].rvs() for i in range(config.n)]
+        
+        # 1. Cluster Assignment
+        client_clusters = np.zeros(config.n, dtype=int)
+        if config.exact_assign:
+            # Use exact expected loss for assignment
+            A_bar_list = data['A_bar_list']
+            b_bar_list = data['b_bar_list']
+            for i in range(config.n):
+                losses = []
+                for j in range(K):
+                    w_j = cluster_models[j]
+                    A_bar_i = A_bar_list[i]
+                    b_bar_i = b_bar_list[i]
+                    # loss = 0.5 * np.dot(w_j, A_bar_i @ w_j) - np.dot(b_bar_i, w_j)
+                    # Use MSE as loss
+                    loss = np.linalg.norm(A_bar_i @ w_j - b_bar_i)**2
+                    losses.append(loss)
+                client_clusters[i] = np.argmin(losses)
+        else:
+            # Use stochastic loss approximation for assignment
+            for i in range(config.n):
+                s_t_i = samples[i]
+                losses = []
+                for j in range(K):
+                    w_j = cluster_models[j]
+                    loss = 0.5 * np.dot(w_j, data['A_func'](s_t_i) @ w_j) - \
+                           np.dot(data['b_func'](s_t_i, data['thetas_star'][i]), w_j)
+                losses.append(loss)
+            client_clusters[i] = np.argmin(losses)
 
-        def run_all_methods(data, config, run_idx):
-            # Cache results for personalized methods to avoid re-running
-            _temp_results = {}
-            for method_key, method_func in methods.items():
-                # For personalized methods that return per-agent errors
-                if method_key in ['pcl', 'pfedme', 'ditto']:
-                    if method_key not in _temp_results:
-                        _temp_results[method_key] = method_func(data, config)
-                    errors[method_key][run_idx] = np.mean(_temp_results[method_key], axis=1)
-                elif method_key in ['pcl_i', 'pfedme_i', 'ditto_i']:
-                    base_method = method_key.replace('_i', '')
-                    if base_method not in _temp_results:
-                        # Find the corresponding base method function
-                        base_method_func = list(set(m for k, m in methods.items() if k.startswith(base_method)))[0]
-                        _temp_results[base_method] = base_method_func(data, config)
-                    errors[method_key][run_idx] = _temp_results[base_method][:,0]
-                # For non-personalized methods
-                else:
-                    errors[method_key][run_idx] = method_func(data, config)
+        # 2. Gradient Calculation and Aggregation
+        cluster_grads = [[] for _ in range(K)]
+        for i in range(config.n):
+            s_t_i = samples[i]
+            chosen_cluster_idx = client_clusters[i]
+            chosen_model = cluster_models[chosen_cluster_idx]
+            
+            grad = data['A_func'](s_t_i) @ chosen_model - data['b_func'](s_t_i, data['thetas_star'][i])
+            cluster_grads[chosen_cluster_idx].append(grad)
+            
+        # 3. Cluster Model Update
+        for j in range(K):
+            if cluster_grads[j]:
+                avg_grad = np.mean(cluster_grads[j], axis=0)
+                cluster_models[j] -= config.alpha * avg_grad
 
-        for run in range(runs):
-            print(f"Run {run+1}/{runs}")
-            data = generate_synthetic_data(config)
-            run_all_methods(data, config, run)
-
-        # Compute mean and std
-        results[noise_a] = {
-            method: (
-                errors[method].mean(axis=0),
-                errors[method].std(axis=0)
-            )
-            for method in methods
-        }
-    return results
+        # 4. Error Calculation
+        for i in range(config.n):
+            model_for_client = cluster_models[client_clusters[i]]
+            errors[t, i] = np.linalg.norm(model_for_client - data['x_stars'][i])**2
+            
+    return np.mean(errors, axis=1)
 
 # %%
 # Wrapper for experiments with multiple repeats and heterogeneity settings
@@ -435,12 +446,13 @@ def run_experiments_with_repeats(config):
         'ind': run_independent_learning,
         'fedavg': run_federated_averaging,
         # 'scaffold': run_scaffold,
-        'pcl': run_personalized_collaborative,
+        # 'pcl': run_personalized_collaborative,
         # 'pcl_i': run_personalized_collaborative,
-        'pfedme': run_pfedme,
+        # 'pfedme': run_pfedme,
         # 'pfedme_i': run_pfedme,
         'ditto': run_ditto,
         # 'ditto_i': run_ditto,
+        'cluster': run_cluster,
     }
 
     # Initialize error arrays
@@ -526,6 +538,7 @@ def plot_results_on_axis(ax, results_dict, config, title):
         ('pfedme_i', 'Agent-specific pFedMe', 'X', 'C6'),
         ('ditto', 'Ditto', 'v', 'C7'),
         ('ditto_i', 'Agent-specific Ditto', '<', 'C8'),
+        ('cluster', 'Clustered FL', '>', 'C9'),
         ]:
         if key in results_dict:
             mean, std = results_dict[key]
