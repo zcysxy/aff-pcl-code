@@ -26,6 +26,7 @@ class Config:
     num_clusters = 10
     init_cluster = 1e-2
     exact_assign = True
+    pretrain_ratio = 0.5
     noise_a_list = [0.0, 0.5, 1.0, 2.0]
     # Basic
     heterogeneity_settings = {
@@ -436,6 +437,40 @@ def run_cluster(data: dict, config: Config):
     return np.mean(errors, axis=1)
 
 # %%
+def run_finetune(data: dict, config: Config):
+    """Baseline 7: FedAvg then Fine-tune."""
+    print("Running Fine-tune...")
+    
+    pretrain_steps = int(config.t * config.pretrain_ratio)
+    
+    fedavg_model = np.zeros(config.d)
+    errors = np.zeros((config.t, config.n))
+
+    # Phase 1: FedAvg Pre-training
+    for t in range(pretrain_steps):
+        grad_agg = np.zeros(config.d)
+        for i in range(config.n):
+            s_t_i = data['distributions'][i].rvs()
+            g_t_i = data['A_func'](s_t_i) @ fedavg_model - data['b_func'](s_t_i, data['thetas_star'][i])
+            grad_agg += g_t_i
+        
+        fedavg_model -= config.alpha * (grad_agg / config.n)
+        
+        for i in range(config.n):
+            errors[t, i] = np.linalg.norm(fedavg_model - data['x_stars'][i])**2
+
+    # Phase 2: Independent Fine-tuning
+    personalized_models = [fedavg_model.copy() for _ in range(config.n)]
+    for t in range(pretrain_steps, config.t):
+        for i in range(config.n):
+            s_t_i = data['distributions'][i].rvs()
+            grad_i = data['A_func'](s_t_i) @ personalized_models[i] - data['b_func'](s_t_i, data['thetas_star'][i])
+            personalized_models[i] -= config.alpha * grad_i
+            errors[t, i] = np.linalg.norm(personalized_models[i] - data['x_stars'][i])**2
+            
+    return np.mean(errors, axis=1)
+
+# %%
 # Wrapper for experiments with multiple repeats and heterogeneity settings
 def run_experiments_with_repeats(config):
     runs = config.runs
@@ -446,13 +481,14 @@ def run_experiments_with_repeats(config):
         'ind': run_independent_learning,
         'fedavg': run_federated_averaging,
         # 'scaffold': run_scaffold,
-        # 'pcl': run_personalized_collaborative,
+        'pcl': run_personalized_collaborative,
         # 'pcl_i': run_personalized_collaborative,
         # 'pfedme': run_pfedme,
         # 'pfedme_i': run_pfedme,
         'ditto': run_ditto,
         # 'ditto_i': run_ditto,
-        'cluster': run_cluster,
+        # 'cluster': run_cluster,
+        'finetune': run_finetune,
     }
 
     # Initialize error arrays
@@ -539,6 +575,7 @@ def plot_results_on_axis(ax, results_dict, config, title):
         ('ditto', 'Ditto', 'v', 'C7'),
         ('ditto_i', 'Agent-specific Ditto', '<', 'C8'),
         ('cluster', 'Clustered FL', '>', 'C9'),
+        ('finetune', 'Fine-tune', 'd', 'C0'),
         ]:
         if key in results_dict:
             mean, std = results_dict[key]
