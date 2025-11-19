@@ -326,6 +326,43 @@ def run_pfedme(data: dict, config: Config):
     return errors
 
 # %%
+def run_ditto(data: dict, config: Config):
+    """Baseline 5: Ditto."""
+    print("Running Ditto...")
+    # Personalized models for each agent
+    v = [np.zeros(config.d) for _ in range(config.n)]
+    # Global model
+    w = np.zeros(config.d)
+    
+    errors = np.zeros((config.t, config.n))
+
+    for t in range(config.t):
+        w_t = w.copy()
+        grad_agg = np.zeros(config.d)
+        samples = [data['distributions'][i].rvs() for i in range(config.n)]
+
+        # Global model update (one round of FedAvg)
+        for i in range(config.n):
+            s_t_i = samples[i]
+            g_global_i = data['A_func'](s_t_i) @ w_t - data['b_func'](s_t_i, data['thetas_star'][i])
+            grad_agg += g_global_i
+        w = w_t - config.alpha * (grad_agg / config.n)
+
+        # Personalized model update
+        for i in range(config.n):
+            s_t_i = samples[i]
+            # Gradient at the client's current personalized model
+            g_local_i = data['A_func'](s_t_i) @ v[i] - data['b_func'](s_t_i, data['thetas_star'][i])
+            
+            # Ditto update rule
+            regularization_term = config.lamda * (v[i] - w)
+            v[i] -= config.alpha * (g_local_i + regularization_term)
+            
+            errors[t, i] = np.linalg.norm(v[i] - data['x_stars'][i])**2
+            
+    return errors
+
+# %%
 # Wrapper for experiments with varying noise_a and fixed heterogeneity
 def run_experiments_with_noise(config):
     runs = config.runs
@@ -333,11 +370,13 @@ def run_experiments_with_noise(config):
     methods = {
         'ind': run_independent_learning,
         'fedavg': run_federated_averaging,
-        'scaffold': run_scaffold,
+        # 'scaffold': run_scaffold,
         'pcl': run_personalized_collaborative,
         # 'pcl_i': run_personalized_collaborative,
         'pfedme': run_pfedme,
         # 'pfedme_i': run_pfedme,
+        'ditto': run_ditto,
+        # 'ditto_i': run_ditto,
     }
     noise_a_list = config.noise_a_list
 
@@ -355,11 +394,11 @@ def run_experiments_with_noise(config):
             _temp_results = {}
             for method_key, method_func in methods.items():
                 # For personalized methods that return per-agent errors
-                if method_key in ['pcl', 'pfedme']:
+                if method_key in ['pcl', 'pfedme', 'ditto']:
                     if method_key not in _temp_results:
                         _temp_results[method_key] = method_func(data, config)
                     errors[method_key][run_idx] = np.mean(_temp_results[method_key], axis=1)
-                elif method_key in ['pcl_i', 'pfedme_i']:
+                elif method_key in ['pcl_i', 'pfedme_i', 'ditto_i']:
                     base_method = method_key.replace('_i', '')
                     if base_method not in _temp_results:
                         # Find the corresponding base method function
@@ -395,11 +434,13 @@ def run_experiments_with_repeats(config):
     methods = {
         'ind': run_independent_learning,
         'fedavg': run_federated_averaging,
-        'scaffold': run_scaffold,
+        # 'scaffold': run_scaffold,
         'pcl': run_personalized_collaborative,
-        'pcl_i': run_personalized_collaborative,
+        # 'pcl_i': run_personalized_collaborative,
         'pfedme': run_pfedme,
-        'pfedme_i': run_pfedme,
+        # 'pfedme_i': run_pfedme,
+        'ditto': run_ditto,
+        # 'ditto_i': run_ditto,
     }
 
     # Initialize error arrays
@@ -413,11 +454,11 @@ def run_experiments_with_repeats(config):
         _temp_results = {}
         for method_key, method_func in methods.items():
             # For personalized methods that return per-agent errors
-            if method_key in ['pcl', 'pfedme']:
+            if method_key in ['pcl', 'pfedme', 'ditto']:
                 if method_key not in _temp_results:
                     _temp_results[method_key] = method_func(data, config)
                 errors[het_key][method_key][run_idx] = np.mean(_temp_results[method_key], axis=1)
-            elif method_key in ['pcl_i', 'pfedme_i']:
+            elif method_key in ['pcl_i', 'pfedme_i', 'ditto_i']:
                 base_method = method_key.replace('_i', '')
                 if base_method not in _temp_results:
                     # Find the corresponding base method function
@@ -483,6 +524,8 @@ def plot_results_on_axis(ax, results_dict, config, title):
         ('pcl_i', 'Agent-specific PCL', 's', 'C3'),  # Changed marker to square ('s') for matplotlib
         ('pfedme', 'pFedMe', 'P', 'C5'),
         ('pfedme_i', 'Agent-specific pFedMe', 'X', 'C6'),
+        ('ditto', 'Ditto', 'v', 'C7'),
+        ('ditto_i', 'Agent-specific Ditto', '<', 'C8'),
         ]:
         if key in results_dict:
             mean, std = results_dict[key]
