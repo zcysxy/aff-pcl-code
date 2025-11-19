@@ -31,7 +31,7 @@ class Config:
     # Basic
     heterogeneity_settings = {
         'homogeneous': (0.0, 0.0),
-        # 'low': (0.05, 0.05),
+        'low': (0.05, 0.05),
         'medium': (0.3, 0.3),
         'high': (0.8, 0.8),
     }
@@ -621,7 +621,7 @@ for i, (key, label) in enumerate(results_dict.items()):
 fig.supxlabel('# Samples', fontsize=14, y=0.12)
 fig.supylabel('Mean Squared Error', fontsize=14)
 handles, labels = axs[0,0].get_legend_handles_labels()
-fig.legend(handles, labels, loc='lower center', ncol=len(results), fontsize=14, frameon=False)
+fig.legend(handles, labels, loc='lower center', ncol=len(results), fontsize=14, frameon=False, bbox_to_anchor=(0.5, -0.2))
 plt.tight_layout(rect=[0, 0.03, 1, 0.94])
 # plt.show()
 # fig.savefig("fig/comp.png", dpi=300)
