@@ -480,14 +480,14 @@ def run_experiments_with_repeats(config):
     methods = {
         'ind': run_independent_learning,
         'fedavg': run_federated_averaging,
-        # 'scaffold': run_scaffold,
+        'scaffold': run_scaffold,
         'pcl': run_personalized_collaborative,
         # 'pcl_i': run_personalized_collaborative,
-        # 'pfedme': run_pfedme,
+        'pfedme': run_pfedme,
         # 'pfedme_i': run_pfedme,
         'ditto': run_ditto,
         # 'ditto_i': run_ditto,
-        # 'cluster': run_cluster,
+        'cluster': run_cluster,
         'finetune': run_finetune,
     }
 
@@ -624,7 +624,7 @@ handles, labels = axs[0,0].get_legend_handles_labels()
 fig.legend(handles, labels, loc='lower center', ncol=len(results), fontsize=14, frameon=False)
 plt.tight_layout(rect=[0, 0.03, 1, 0.94])
 # plt.show()
-fig.savefig("fig/comp.png", dpi=300)
+# fig.savefig("fig/comp.png", dpi=300)
 
 # %%
 # Summary table
