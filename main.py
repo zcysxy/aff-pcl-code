@@ -12,7 +12,7 @@ import os
 class Config:
     """Stores all parameters for the numerical experiment."""
     backup_dir = "bkup"
-    runs = 3
+    runs = 10
     n = 20
     d = 5
     t = 60
@@ -32,8 +32,8 @@ class Config:
     heterogeneity_settings = {
         'homogeneous': (0.0, 0.0),
         'low': (0.05, 0.05),
-        'medium': (0.3, 0.3),
-        'high': (0.8, 0.8),
+        'medium': (0.2, 0.2),
+        'high': (0.5, 0.5),
     }
     # Exhaustive
     # heterogeneity_settings = {}
@@ -482,11 +482,11 @@ def run_experiments_with_repeats(config):
         'fedavg': run_federated_averaging,
         'scaffold': run_scaffold,
         'pcl': run_personalized_collaborative,
-        # 'pcl_i': run_personalized_collaborative,
+        'pcl_i': run_personalized_collaborative,
         'pfedme': run_pfedme,
-        # 'pfedme_i': run_pfedme,
+        'pfedme_i': run_pfedme,
         'ditto': run_ditto,
-        # 'ditto_i': run_ditto,
+        'ditto_i': run_ditto,
         'cluster': run_cluster,
         'finetune': run_finetune,
     }
@@ -555,9 +555,9 @@ results = run_experiments_with_repeats(config)
 #     results = pickle.load(f)
 
 # Save
-# timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-# with open(f"bkup/{timestamp}.pkl", "wb") as f:
-#     pickle.dump(results, f)
+timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+with open(f"bkup/{timestamp}.pkl", "wb") as f:
+    pickle.dump(results, f)
 
 
 # %%
