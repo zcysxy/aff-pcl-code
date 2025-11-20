@@ -32,8 +32,8 @@ class Config:
     heterogeneity_settings = {
         'homogeneous': (0.0, 0.0),
         'low': (0.05, 0.05),
-        'medium': (0.2, 0.2),
-        'high': (0.5, 0.5),
+        'medium': (0.3, 0.3),
+        'high': (0.8, 0.8),
     }
     # Exhaustive
     # heterogeneity_settings = {}
@@ -546,18 +546,18 @@ config = Config()
 
 # Run
 # results = run_experiments_with_noise(config)
-results = run_experiments_with_repeats(config)
+# results = run_experiments_with_repeats(config)
 
 # Load
-# backup_files = [f for f in os.listdir(config.backup_dir) if f.endswith("comp.pkl")]
-# latest_file = max(backup_files, key=lambda x: x.split(".")[0])
-# with open(os.path.join(config.backup_dir, latest_file), "rb") as f:
-#     results = pickle.load(f)
+backup_files = [f for f in os.listdir(config.backup_dir) if f.endswith(".pkl")]
+latest_file = max(backup_files, key=lambda x: x.split(".")[0])
+with open(os.path.join(config.backup_dir, latest_file), "rb") as f:
+    results = pickle.load(f)
 
 # Save
-timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-with open(f"bkup/{timestamp}.pkl", "wb") as f:
-    pickle.dump(results, f)
+# timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+# with open(f"bkup/{timestamp}.pkl", "wb") as f:
+#     pickle.dump(results, f)
 
 
 # %%
@@ -567,15 +567,15 @@ def plot_results_on_axis(ax, results_dict, config, title):
     for key, label, marker, color in [
         ('ind', 'Independent', 'o', 'C0'),
         ('fedavg', 'Federated', '^', 'C1'),  # triangle marker
-        ('scaffold', 'SCAFFOLD', '*', 'C4'),
+        # ('scaffold', 'SCAFFOLD', '*', 'C4'),
+        ('pfedme', 'pFedMe', 'P', 'C5'),
+        # ('pfedme_i', 'Agent-specific pFedMe', 'X', 'C6'),
+        ('ditto', 'Ditto', 'v', 'C7'),
+        # ('ditto_i', 'Agent-specific Ditto', '<', 'C8'),
+        ('cluster', 'Clustered', '>', 'C9'),
+        ('finetune', 'Fine-tune', 'd', 'C0'),
         ('pcl', 'PCL', 'D', 'C2'),
         ('pcl_i', 'Agent-specific PCL', 's', 'C3'),  # Changed marker to square ('s') for matplotlib
-        ('pfedme', 'pFedMe', 'P', 'C5'),
-        ('pfedme_i', 'Agent-specific pFedMe', 'X', 'C6'),
-        ('ditto', 'Ditto', 'v', 'C7'),
-        ('ditto_i', 'Agent-specific Ditto', '<', 'C8'),
-        ('cluster', 'Clustered FL', '>', 'C9'),
-        ('finetune', 'Fine-tune', 'd', 'C0'),
         ]:
         if key in results_dict:
             mean, std = results_dict[key]
@@ -583,6 +583,7 @@ def plot_results_on_axis(ax, results_dict, config, title):
             ax.fill_between(x, mean-1.64*std/np.sqrt(config.runs), mean+1.64*std/np.sqrt(config.runs), color=color, alpha=0.2)
     ax.set_title(title, fontsize=14)
     ax.set_yscale('log')
+    # ax.set_ylim(0.15e-3, 2)
     ax.tick_params(axis='both', which='both', length=0)
     ax.set_aspect(1./ax.get_data_ratio())
     # ax.grid(True, which="both", ls="--", alpha=0.6)  # grid removed
@@ -621,10 +622,10 @@ for i, (key, label) in enumerate(results_dict.items()):
 fig.supxlabel('# Samples', fontsize=14, y=0.12)
 fig.supylabel('Mean Squared Error', fontsize=14)
 handles, labels = axs[0,0].get_legend_handles_labels()
-fig.legend(handles, labels, loc='lower center', ncol=len(results), fontsize=14, frameon=False, bbox_to_anchor=(0.5, -0.2))
-plt.tight_layout(rect=[0, 0.03, 1, 0.94])
+fig.legend(handles, labels, loc='lower center', ncol=len(results), fontsize=14, frameon=False, bbox_to_anchor=(0.5, -0.1))
+plt.tight_layout(rect=[0, -0.03, 1, 0.94])
 # plt.show()
-# fig.savefig("fig/comp.png", dpi=300)
+fig.savefig("fig/comp.png", dpi=300, bbox_inches='tight')
 
 # %%
 # Summary table
