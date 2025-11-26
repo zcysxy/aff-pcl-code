@@ -10,8 +10,9 @@ class Config:
     gamma = 0.1  # Discount factor
     alpha = 1e-1  # Learning rate
     temperature = 10 # Softmax temperature
-    T = 2500  # Number of steps
+    T = 4000  # Number of steps
     K = 1 # Synchronization period for FedAvg
+    runs = 10 # number of independent runs
     
     # Heterogeneity parameters
     eps_r = 0.5 # Reward heterogeneity
@@ -19,8 +20,6 @@ class Config:
 
     # AffPCL option
     adaptive_density_ratio: bool = True
-
-    runs = 1 # number of independent runs
     
 def generate_mdp_data(config: Config):
     """
@@ -349,26 +348,70 @@ def run_experiments(config: Config):
     }
     return final_results
 
-def plot_results(results, config):
-    """Plots the results of the experiments."""
-    fig, ax = plt.subplots(figsize=(8, 6))
+def plot_results_on_axis(ax, results_dict, config, title, styles):
+    """Plots the results for one experiment scenario on a given axis."""
     x = np.arange(config.T)
+    for key, (mean, std) in results_dict.items():
+        skip = 50
+        ax.plot(x[::skip], mean[::skip], label=key, markevery=800//skip, markerfacecolor='none', markersize=7, **styles[key])
+        # 95% confidence interval
+        ax.fill_between(x[::skip], (mean - 1.64 * std / np.sqrt(config.runs))[::skip], (mean + 1.64 * std / np.sqrt(config.runs))[::skip], alpha=0.2)
     
-    for method, (mean, std) in results.items():
-        ax.plot(x, mean, label=method)
-        ax.fill_between(x, mean - std / np.sqrt(config.runs), mean + std / np.sqrt(config.runs), alpha=0.2)
-        
-    ax.set_title('Comparison of RL Algorithms')
-    ax.set_xlabel('Time Steps')
-    ax.set_ylabel('Mean Squared Error')
+    ax.set_title(title)
     ax.set_yscale('log')
-    ax.legend()
-    ax.grid(True, which="both", ls="--")
-    plt.tight_layout()
-    plt.savefig('fig/rl_comp.png', dpi=300)
+    ax.grid(False)
+    ax.tick_params(axis='both', which='both', length=0)
+    ax.set_aspect(1./ax.get_data_ratio())
+
+def plot_all_results(all_results, config):
+    """Plots the results of all experiments in a 2x2 grid."""
+    fig, axs = plt.subplots(1, 4, figsize=(12, 4), squeeze=False)
+    axs = axs.flatten()
+
+    heterogeneity_levels = list(all_results.keys())
+    het_dict = {
+            0: 'Homogeneous',
+            0.2: 'Low Heterogeneity',
+            0.5: 'Medium Heterogeneity',
+            1.0: 'High Heterogeneity'
+    }
+    style_dict = {
+        'Independent': {'color': 'C0', 'marker': 'o'},
+        'FedAvg': {'color': 'C1', 'marker': '^'},
+        'AffPCL': {'color': 'C2', 'marker': 'D'},
+        'AffPCL w/ DRE': {'color': 'C3', 'marker': 's'},
+    }
+
+    for i, het_level in enumerate(heterogeneity_levels):
+        title = f'{het_dict[het_level]}'
+        plot_results_on_axis(axs[i], all_results[het_level], config, title, style_dict)
+
+    fig.supxlabel('# Samples', fontsize=14, y=0.12)
+    fig.supylabel('Mean Squared Error', fontsize=14)
+    
+    # Create a single legend for the entire figure
+    handles, labels = axs[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc='lower center', ncol=len(labels), bbox_to_anchor=(0.5, 0), frameon=False, fontsize=12)
+    
+    plt.tight_layout(rect=[0, 0, 1, 0.96])
+    fig.savefig('fig/rl_comp_sweep.png', dpi=300, bbox_inches='tight')
     plt.show()
 
-if __name__ == '__main__':
-    config = Config()
+# %%
+all_results = {}
+heterogeneity_levels = [0, 0.2, 0.5, 1.0]
+
+base_config = Config()
+
+for het_level in heterogeneity_levels:
+    print(f"\n----- Running Sweep for Heterogeneity Level: {het_level} -----")
+    config = base_config
+    config.eps_r = het_level
+    config.eps_p = het_level
+    
+    # Run the experiment for the current setting
     results = run_experiments(config)
-    plot_results(results, config)
+    all_results[het_level] = results
+    
+# %% Plot the aggregated results
+plot_all_results(all_results, base_config)
