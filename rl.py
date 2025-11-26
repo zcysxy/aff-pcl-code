@@ -17,6 +17,9 @@ class Config:
     eps_r = 0.5 # Reward heterogeneity
     eps_p = 0.5 # Transition heterogeneity
 
+    # AffPCL option
+    adaptive_density_ratio: bool = True
+
     runs = 1 # number of independent runs
     
 def generate_mdp_data(config: Config):
@@ -59,9 +62,15 @@ def generate_mdp_data(config: Config):
             q_star_opt = agents[i]['R'] + config.gamma * (agents[i]['P'] @ v_star_opt)
     
         # 2. Define the softmax policy based on q_star_opt
-        scaled_q = q_star_opt / config.temperature
-        exp_q = np.exp(scaled_q - np.max(scaled_q, axis=1, keepdims=True)) # amax for numerical stability
-        pi_policy = exp_q / np.sum(exp_q, axis=1, keepdims=True)
+        if config.temperature > 0:
+            scaled_q = q_star_opt / config.temperature
+            exp_q = np.exp(scaled_q - np.max(scaled_q, axis=1, keepdims=True))
+            pi_policy = exp_q / np.sum(exp_q, axis=1, keepdims=True)
+        else: # Greedy policy if temperature is zero
+            pi_policy = np.zeros_like(q_star_opt)
+            greedy_actions = np.argmax(q_star_opt, axis=1)
+            pi_policy[np.arange(config.S), greedy_actions] = 1.0
+
 
         # 3. Calculate q_pi for this policy by solving the Bellman expectation equation
         P_pi_sa = np.zeros((config.S * config.A, config.S * config.A))
@@ -86,7 +95,7 @@ def generate_mdp_data(config: Config):
         agents[i]['theta_star'] = np.linalg.pinv(phi_flat) @ q_pi_flat
     
         # 5. Calculate stationary distribution d_sa for this policy
-        P_pi_s = np.einsum('sa,sap->sp', pi_policy, agents[i]['P']) # S x S transition matrix
+        P_pi_s = np.einsum('sa,sap->sp', pi_policy, agents[i]['P'])
     
         d_s = np.ones(config.S) / config.S
         for _ in range(1000): # Power iteration
@@ -122,7 +131,9 @@ def run_independent_sarsa(data: dict, config: Config):
     s = [np.random.randint(config.S) for _ in range(config.n)]
     
     def get_action(q_values, temperature):
-        scaled_q = q_values / temperature
+        if temperature == 0:
+            return np.argmax(q_values)
+        scaled_q = q_values / (temperature + 1e-9)
         exp_q = np.exp(scaled_q - np.max(scaled_q))
         probs = exp_q / np.sum(exp_q)
         return np.random.choice(config.A, p=probs)
@@ -159,7 +170,9 @@ def run_fedavg_sarsa(data: dict, config: Config):
     s = [np.random.randint(config.S) for _ in range(config.n)]
     
     def get_action(q_values, temperature):
-        scaled_q = q_values / temperature
+        if temperature == 0:
+            return np.argmax(q_values)
+        scaled_q = q_values / (temperature + 1e-9)
         exp_q = np.exp(scaled_q - np.max(scaled_q))
         probs = exp_q / np.sum(exp_q)
         return np.random.choice(config.A, p=probs)
@@ -191,31 +204,44 @@ def run_fedavg_sarsa(data: dict, config: Config):
 
 
 def run_affpcl_sarsa(data: dict, config: Config):
-    """Proposed Method: AffPCL SARSA."""
-    print("Running AffPCL SARSA...")
+    """Proposed Method: AffPCL SARSA with optional adaptive density ratio."""
+    print(f"Running AffPCL SARSA (Adaptive: {config.adaptive_density_ratio})...")
     
     # Models
     thetas = [np.zeros(config.d) for _ in range(config.n)]
     theta_c = np.zeros(config.d)
     R_c = np.zeros((config.S, config.A))
-    N_c = np.zeros((config.S, config.A))
+    N_c = np.zeros((config.S, config.A)) + 1e-9
 
     # State
     errors = np.zeros((config.T, config.n))
     s = [np.random.randint(config.S) for _ in range(config.n)]
 
+    # Adaptive density estimation state
+    d_s_counts = [np.ones(config.S) for _ in range(config.n)]
+
     def get_action(q_values, temperature):
         if temperature == 0:
             return np.argmax(q_values)
-        scaled_q = q_values / temperature
+        scaled_q = q_values / (temperature + 1e-9)
         exp_q = np.exp(scaled_q - np.max(scaled_q))
         probs = exp_q / np.sum(exp_q)
         return np.random.choice(config.A, p=probs)
 
+    def get_policy_table(theta, temperature):
+        q_table = data['phi'] @ theta
+        if temperature == 0:
+            pi_table = np.zeros_like(q_table)
+            greedy_actions = np.argmax(q_table, axis=1)
+            pi_table[np.arange(config.S), greedy_actions] = 1.0
+            return pi_table
+        scaled_q = q_table / (temperature + 1e-9)
+        exp_q = np.exp(scaled_q - np.max(scaled_q, axis=1, keepdims=True))
+        return exp_q / np.sum(exp_q, axis=1, keepdims=True)
+
     for t in range(config.T):
         theta_c_t = theta_c.copy()
         
-        # --- Step 1: Collect samples and update central reward model ---
         samples = []
         for i in range(config.n):
             q_s_i = data['phi'][s[i], :, :] @ thetas[i]
@@ -227,8 +253,6 @@ def run_affpcl_sarsa(data: dict, config: Config):
             N_c[s[i], a_i] += 1
             R_c[s[i], a_i] += (r_i - R_c[s[i], a_i]) / N_c[s[i], a_i]
         
-        # --- Step 2: Compute central gradients for all samples ---
-        # These will be used for the central update and the importance correction.
         central_gradients = []
         for j in range(config.n):
             sample_j = samples[j]
@@ -236,64 +260,71 @@ def run_affpcl_sarsa(data: dict, config: Config):
             
             q_s_j_c = data['phi'][s_j, :, :] @ theta_c_t
             r_c = R_c[s_j, a_j]
-
             q_s_next_j_c = data['phi'][s_next_j, :, :] @ theta_c_t
             a_next_j_c = get_action(q_s_next_j_c, config.temperature)
 
-            # NOTE: The central gradient is evaluated at the state s_j but using the action a_j
-            # that was actually taken by the local policy. This is a subtle point in on-policy correction.
             td_error_c = r_c + config.gamma * q_s_next_j_c[a_next_j_c] - q_s_j_c[a_j]
             g_c_j = td_error_c * data['phi'][s_j, a_j, :]
             central_gradients.append(g_c_j)
 
-        # Update central model
         grad_c_agg = np.mean(central_gradients, axis=0)
         theta_c += config.alpha * grad_c_agg
 
-        # --- Step 3: Local Personalized Updates ---
+        if config.adaptive_density_ratio:
+            all_d_hat_sa = []
+            for k in range(config.n):
+                d_hat_k = d_s_counts[k] / np.sum(d_s_counts[k])
+                pi_hat_k = get_policy_table(thetas[k], config.temperature)
+                d_hat_sa_k = d_hat_k[:, np.newaxis] * pi_hat_k
+                all_d_hat_sa.append(d_hat_sa_k)
+            d_hat_sa_0 = np.mean(all_d_hat_sa, axis=0)
+        
         for i in range(config.n):
             sample_i = samples[i]
             s_i, a_i, r_i, s_next_i = sample_i['s'], sample_i['a'], sample_i['r'], sample_i['s_next']
 
-            # 1. Local gradient (based on agent's own action and reward)
             q_s_i = data['phi'][s_i, :, :] @ thetas[i]
             q_s_next_i = data['phi'][s_next_i, :, :] @ thetas[i]
             a_next_i = get_action(q_s_next_i, config.temperature)
             td_error_local = r_i + config.gamma * q_s_next_i[a_next_i] - q_s_i[a_i]
             g_local = td_error_local * data['phi'][s_i, a_i, :]
 
-            # 2. Importance-corrected central direction (g_rho_corr)
             g_rho_corr = np.zeros(config.d)
-            for j in range(config.n):
-                sample_j = samples[j]
-                s_j, a_j = sample_j['s'], sample_j['a']
-                g_c_j = central_gradients[j]
-                rho_val = data['agents'][i]['rho_func'](s_j, a_j)
-                g_rho_corr += rho_val * g_c_j
+            if config.adaptive_density_ratio:
+                rho_hat_i = all_d_hat_sa[i] / (d_hat_sa_0 + 1e-9)
+                for j in range(config.n):
+                    s_j, a_j = samples[j]['s'], samples[j]['a']
+                    g_c_j = central_gradients[j]
+                    rho_val = rho_hat_i[s_j, a_j]
+                    g_rho_corr += rho_val * g_c_j
+            else: 
+                for j in range(config.n):
+                    s_j, a_j = samples[j]['s'], samples[j]['a']
+                    g_c_j = central_gradients[j]
+                    rho_val = data['agents'][i]['rho_func'](s_j, a_j)
+                    g_rho_corr += rho_val * g_c_j
             g_rho_corr /= config.n
 
-            # 3. Bias correction
-            # The bias correction uses the central gradient evaluated at agent i's own sample.
             g_bias = central_gradients[i]
             
-            # Full AffPCL update (gradient ascent)
             g_tilde = g_local + g_rho_corr - g_bias
             thetas[i] += config.alpha * g_tilde
 
-            # Update state for next iteration
             s[i] = s_next_i
+            d_s_counts[i][s_next_i] += 1
             errors[t, i] = np.linalg.norm(thetas[i] - data['agents'][i]['theta_star'])**2
 
     return np.mean(errors, axis=1)
 
 
-def run_experiments(config):
+def run_experiments(config: Config):
     """Wrapper for experiments with multiple repeats."""
     
     methods = {
         'Independent': run_independent_sarsa,
         'FedAvg': run_fedavg_sarsa,
         'AffPCL': run_affpcl_sarsa,
+        'AffPCL w/ DRE': run_affpcl_sarsa,
     }
 
     results = {method: np.zeros((config.runs, config.T)) for method in methods}
@@ -302,10 +333,13 @@ def run_experiments(config):
         print(f"Run {run + 1}/{config.runs}")
         data = generate_mdp_data(config)
         for method_key, method_func in methods.items():
+            if method_key == 'AffPCL w/ DRE':
+                config.adaptive_density_ratio = True
+            elif method_key == 'AffPCL':
+                config.adaptive_density_ratio = False
             errors = method_func(data, config)
             results[method_key][run, :] = errors
 
-    # Compute mean and std
     final_results = {
         method: (
             results[method].mean(axis=0),
