@@ -9,13 +9,13 @@ class Config:
     d = 20  # Feature dimension
     gamma = 0.1  # Discount factor
     alpha = 1e-1  # Learning rate
-    temperature = 100 # Softmax temperature
+    temperature = 10 # Softmax temperature
     T = 2500  # Number of steps
     K = 1 # Synchronization period for FedAvg
     
     # Heterogeneity parameters
-    eps_r = 0.9 # Reward heterogeneity
-    eps_p = 0.9 # Transition heterogeneity
+    eps_r = 0.5 # Reward heterogeneity
+    eps_p = 0.5 # Transition heterogeneity
 
     runs = 1 # number of independent runs
     
@@ -198,14 +198,14 @@ def run_affpcl_sarsa(data: dict, config: Config):
     thetas = [np.zeros(config.d) for _ in range(config.n)]
     theta_c = np.zeros(config.d)
     R_c = np.zeros((config.S, config.A))
-    N_c = np.zeros((config.S, config.A)) # Visit counts for running average
+    N_c = np.zeros((config.S, config.A))
 
     # State
     errors = np.zeros((config.T, config.n))
     s = [np.random.randint(config.S) for _ in range(config.n)]
 
     def get_action(q_values, temperature):
-        if temperature == 0: # Greedy action
+        if temperature == 0:
             return np.argmax(q_values)
         scaled_q = q_values / temperature
         exp_q = np.exp(scaled_q - np.max(scaled_q))
@@ -215,7 +215,7 @@ def run_affpcl_sarsa(data: dict, config: Config):
     for t in range(config.T):
         theta_c_t = theta_c.copy()
         
-        # --- Step 1: Collect samples from all agents and update central reward model ---
+        # --- Step 1: Collect samples and update central reward model ---
         samples = []
         for i in range(config.n):
             q_s_i = data['phi'][s[i], :, :] @ thetas[i]
@@ -224,28 +224,31 @@ def run_affpcl_sarsa(data: dict, config: Config):
             s_next_i = np.random.choice(config.S, p=data['agents'][i]['P'][s[i], a_i, :])
             samples.append({'s': s[i], 'a': a_i, 'r': r_i, 's_next': s_next_i})
 
-            # Update central reward model
             N_c[s[i], a_i] += 1
             R_c[s[i], a_i] += (r_i - R_c[s[i], a_i]) / N_c[s[i], a_i]
         
-        # --- Step 2: Update central model using collected samples ---
-        grad_c_agg = np.zeros(config.d)
+        # --- Step 2: Compute central gradients for all samples ---
+        # These will be used for the central update and the importance correction.
+        central_gradients = []
         for j in range(config.n):
             sample_j = samples[j]
             s_j, a_j, _, s_next_j = sample_j['s'], sample_j['a'], sample_j['r'], sample_j['s_next']
             
-            # Central model's TD error for this sample
             q_s_j_c = data['phi'][s_j, :, :] @ theta_c_t
-            a_j_c = get_action(q_s_j_c, config.temperature) # Action central model would have taken
             r_c = R_c[s_j, a_j]
 
             q_s_next_j_c = data['phi'][s_next_j, :, :] @ theta_c_t
             a_next_j_c = get_action(q_s_next_j_c, config.temperature)
 
-            td_error_c = r_c + config.gamma * q_s_next_j_c[a_next_j_c] - q_s_j_c[a_j_c]
-            grad_c_agg += td_error_c * data['phi'][s_j, a_j_c, :]
-        
-        theta_c += config.alpha * (grad_c_agg / config.n)
+            # NOTE: The central gradient is evaluated at the state s_j but using the action a_j
+            # that was actually taken by the local policy. This is a subtle point in on-policy correction.
+            td_error_c = r_c + config.gamma * q_s_next_j_c[a_next_j_c] - q_s_j_c[a_j]
+            g_c_j = td_error_c * data['phi'][s_j, a_j, :]
+            central_gradients.append(g_c_j)
+
+        # Update central model
+        grad_c_agg = np.mean(central_gradients, axis=0)
+        theta_c += config.alpha * grad_c_agg
 
         # --- Step 3: Local Personalized Updates ---
         for i in range(config.n):
@@ -259,21 +262,19 @@ def run_affpcl_sarsa(data: dict, config: Config):
             td_error_local = r_i + config.gamma * q_s_next_i[a_next_i] - q_s_i[a_i]
             g_local = td_error_local * data['phi'][s_i, a_i, :]
 
-            # 2. Central gradient for correction terms (based on agent i's sample)
-            q_s_i_c = data['phi'][s_i, :, :] @ theta_c_t
-            a_i_c = get_action(q_s_i_c, config.temperature)
-            r_c = R_c[s_i, a_i]
+            # 2. Importance-corrected central direction (g_rho_corr)
+            g_rho_corr = np.zeros(config.d)
+            for j in range(config.n):
+                sample_j = samples[j]
+                s_j, a_j = sample_j['s'], sample_j['a']
+                g_c_j = central_gradients[j]
+                rho_val = data['agents'][i]['rho_func'](s_j, a_j)
+                g_rho_corr += rho_val * g_c_j
+            g_rho_corr /= config.n
 
-            q_s_next_i_c = data['phi'][s_next_i, :, :] @ theta_c_t
-            a_next_i_c = get_action(q_s_next_i_c, config.temperature)
-            
-            td_error_c_i = r_c + config.gamma * q_s_next_i_c[a_next_i_c] - q_s_i_c[a_i_c]
-            g_c_i = td_error_c_i * data['phi'][s_i, a_i_c, :]
-
-            # 3. Importance correction and Bias correction
-            rho_val = data['agents'][i]['rho_func'](s_i, a_i)
-            g_rho_corr = rho_val * g_c_i
-            g_bias = g_c_i
+            # 3. Bias correction
+            # The bias correction uses the central gradient evaluated at agent i's own sample.
+            g_bias = central_gradients[i]
             
             # Full AffPCL update (gradient ascent)
             g_tilde = g_local + g_rho_corr - g_bias
