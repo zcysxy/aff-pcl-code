@@ -471,8 +471,29 @@ def plot_pareto_front(results_mse, config: Config):
     # Apply a 45 degree rotation to the axes
     trans = Affine2D().rotate_deg(45) + ax.transData
 
+    # ! Custom colormap:
+    # \definecolor{client1}{RGB}{206, 77, 69}
+    # \definecolor{client2}{RGB}{241, 156, 101}
+    # \definecolor{client3}{RGB}{42, 168, 118}
+    # \definecolor{client4}{RGB}{10, 123, 131}
+    # \definecolor{server}{RGB}{255, 210, 101}
+    from matplotlib.colors import ListedColormap 
+    # Define custom RGB colors (normalized to [0,1])
+    custom_colors = [
+        (206/255, 77/255, 69/255),    # client1
+        # (230/255, 116/255, 85/255),  # client1.5 (added)
+        (241/255, 156/255, 101/255),  # client2
+        (255/255, 210/255, 101/255),   # client3
+        (42/255, 168/255, 118/255),   # client4
+        (10/255, 123/255, 131/255),   # client5
+        # (32/255, 111/255, 165/255),   # client5.5 (added)
+        # (84/255, 100/255, 200/255),   # client6
+    ]
+    cmap_custom = 'YlGnBu_r'
+    cmap_custom = ListedColormap(custom_colors, name='custom_clients')
+
     # Use the reversed colormap
-    contour = ax.contourf(delta_list, n_inv_list, results_mse_smooth, levels=8, cmap='YlGnBu_r', transform=trans)
+    contour = ax.contourf(delta_list, n_inv_list, results_mse_smooth, levels=5, cmap=cmap_custom, transform=trans)
     # ! Solid contour lines
     lw = 2
     ax.contour(delta_list, n_inv_list, results_mse_smooth, levels=contour.levels, colors='black', linewidths=lw, alpha=0.8, transform=trans)
@@ -509,19 +530,20 @@ def plot_pareto_front(results_mse, config: Config):
         y_rot = x * np.sin(theta) + y * np.cos(theta)
         return x_rot, y_rot
     # Start and end points
+    arrowdict = dict(arrowstyle="-|>", mutation_scale=20, color='black', lw=lw)
     x0, y0 = delta_list[-1], n_inv_list[-1]
     x1, y1 = delta_list[-1], n_inv_list[0]+0.02
     x0r, y0r = rotate_point(x0, y0, theta)
     x1r, y1r = rotate_point(x1, y1, theta)
     ax.annotate('', xy=(x1r, y1r), xytext=(x0r, y0r),
-                arrowprops=dict(arrowstyle="->", color='black', lw=lw),
+                arrowprops=arrowdict,
                 annotation_clip=False)
     x0, y0 = delta_list[-1], n_inv_list[-1]
     x1, y1 = delta_list[0]+0.02, n_inv_list[-1]
     x0r, y0r = rotate_point(x0, y0, theta)
     x1r, y1r = rotate_point(x1, y1, theta)
     ax.annotate('', xy=(x1r, y1r), xytext=(x0r, y0r),
-                arrowprops=dict(arrowstyle="->", color='black', lw=lw),
+                arrowprops=arrowdict,
                 annotation_clip=False)
 
     plt.tight_layout()
@@ -530,5 +552,6 @@ def plot_pareto_front(results_mse, config: Config):
     return fig
 
 fig = plot_pareto_front(results, config)
-# fig.savefig("fig/pareto_front.png", dpi=300)
+fig.patch.set_alpha(0.0)  # Make figure background transparent
+fig.savefig("fig/ts2.png", dpi=600, transparent=True)
 
