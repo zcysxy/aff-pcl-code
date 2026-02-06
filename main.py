@@ -6,8 +6,9 @@ from scipy.stats import multivariate_normal
 import pickle
 import datetime
 import os
+np.random.seed(42)
 
-# %% 
+# %%
 # Configuration
 class Config:
     """Stores all parameters for the numerical experiment."""
@@ -40,7 +41,7 @@ class Config:
     n_list = np.array([2,3,4,5,6,7,8,10,15,20,35,50])
     delta_list = 1 / n_list
 
-# %% 
+# %%
 # Data Generation for Heterogeneous Systems
 def generate_synthetic_data(config: Config):
     """
@@ -137,7 +138,7 @@ def generate_synthetic_data(config: Config):
     print("Data generation complete.")
     return data
 
-# %% 
+# %%
 ## Algorithms
 def run_independent_learning(data: dict, config: Config):
     """Baseline 1: Each agent learns entirely on its own."""
@@ -155,7 +156,7 @@ def run_independent_learning(data: dict, config: Config):
             
     return np.mean(errors, axis=1)
 
-# %% 
+# %%
 def run_federated_averaging(data: dict, config: Config):
     """Baseline 2: All agents learn a single, unified model."""
     print("Running FL...")
@@ -178,7 +179,7 @@ def run_federated_averaging(data: dict, config: Config):
             
     return np.mean(errors, axis=1)
 
-# %% 
+# %%
 def run_personalized_collaborative(data: dict, config: Config):
     """Proposed Method: Personalized Collaborative Learning."""
     print("Running PCL...")
@@ -241,7 +242,7 @@ def run_personalized_collaborative(data: dict, config: Config):
     return np.mean(errors, axis=1)
     # return errors
 
-# %% 
+# %%
 # Wrapper for experiments with varying noise_a and fixed heterogeneity
 def run_experiments_with_noise(config):
     runs = config.runs
@@ -288,7 +289,7 @@ def run_experiments_with_noise(config):
         }
     return results
 
-# %% 
+# %%
 # Wrapper for experiments with multiple repeats and heterogeneity settings
 def run_experiments_with_repeats(config):
     runs = config.runs
@@ -339,7 +340,7 @@ def run_experiments_with_repeats(config):
     }
     return results
 
-# %% 
+# %%
 
 def run_pareto_experiments(config: Config):
     """
@@ -374,7 +375,7 @@ def run_pareto_experiments(config: Config):
             
     return results_mse
 
-# %% 
+# %%
 
 # Main Execution and Variance Plotting
 config = Config()
@@ -385,7 +386,7 @@ config = Config()
 # results = run_pareto_experiments(config)
 
 # Load
-backup_files = [f for f in os.listdir(config.backup_dir) if f.endswith(".pkl")]
+backup_files = [f for f in os.listdir(config.backup_dir) if f.endswith("pareto.pkl")]
 latest_file = max(backup_files, key=lambda x: x.split(".")[0])
 with open(os.path.join(config.backup_dir, latest_file), "rb") as f:
     results = pickle.load(f)
@@ -396,7 +397,7 @@ with open(os.path.join(config.backup_dir, latest_file), "rb") as f:
 #     pickle.dump(results, f)
 
 
-# %% 
+# %%
 
 def plot_results_on_axis(ax, results_dict, config, title):
     x = np.arange(config.t)
@@ -449,13 +450,15 @@ results_dict = {}
 # %%
 
 def plot_pareto_front(results_mse, config: Config):
-    """
+    """  
     Plots the L-shaped iso-performance contours from the simulation results.
     Smooths the contour plot using Gaussian filtering.
     Uses log labels on the colorbar, but does not use LogNorm for plotting.
+    Rotates the canvas by 45 degrees.
     """
     from scipy.ndimage import gaussian_filter
-    import matplotlib.ticker as mticker
+    from matplotlib.transforms import Affine2D
+    import numpy as np
 
     delta_list = config.delta_list
     n_inv_list = 1 / np.array(config.n_list)
@@ -463,29 +466,69 @@ def plot_pareto_front(results_mse, config: Config):
     # Smooth the results using a Gaussian filter
     results_mse_smooth = gaussian_filter(results_mse, sigma=1)
 
-    fig, ax = plt.subplots(figsize=(6, 5))
+    fig, ax = plt.subplots(figsize=(5, 5))
+
+    # Apply a 45 degree rotation to the axes
+    trans = Affine2D().rotate_deg(45) + ax.transData
 
     # Use the reversed colormap
-    contour = ax.contourf(delta_list, n_inv_list, results_mse_smooth, levels=8, cmap='YlGnBu_r')
-    ax.contour(delta_list, n_inv_list, results_mse_smooth, levels=contour.levels, colors='white', linewidths=0.5, alpha=0.8)
+    contour = ax.contourf(delta_list, n_inv_list, results_mse_smooth, levels=8, cmap='YlGnBu_r', transform=trans)
+    # ! Solid contour lines
+    lw = 2
+    ax.contour(delta_list, n_inv_list, results_mse_smooth, levels=contour.levels, colors='black', linewidths=lw, alpha=0.8, transform=trans)
 
     # Add a colorbar with log labels
-    cbar = fig.colorbar(contour)
-    cbar.set_label('MSE')
-    # Set custom ticks for colorbar, including 5e-2
-    ticks = [1e-3, 5e-3, 1e-2, 2e-2]
-    cbar.set_ticks(ticks)
-    cbar.ax.yaxis.set_major_formatter(mticker.LogFormatter())
-    cbar.ax.set_yticklabels([np.format_float_scientific(tick,exp_digits=1,trim='-') for tick in ticks])
+    # cbar = fig.colorbar(contour)
+    # cbar.set_label('MSE')
+    # # Set custom ticks for colorbar, including 5e-2
+    # ticks = [1e-3, 5e-3, 1e-2, 2e-2]
+    # cbar.set_ticks(ticks)
+    # cbar.ax.yaxis.set_major_formatter(mticker.LogFormatter())
+    # cbar.ax.set_yticklabels([np.format_float_scientific(tick,exp_digits=1,trim='-') for tick in ticks])
 
-    ax.set_xlabel('$\\delta$', fontsize=12)
-    ax.set_ylabel('$n^{-1}$', fontsize=12)
-    
+    # ax.set_xlabel('$\\delta$', fontsize=12)
+    # ax.set_ylabel('$n^{-1}$', fontsize=12)
+    ax.set_aspect(1./ax.get_data_ratio())
+    ax.tick_params(axis='both', which='both', length=0)
+    ax.set_xticklabels([])
+    ax.set_yticklabels([])
+    # ! No box borders
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.spines['bottom'].set_visible(False)
+    ax.spines['left'].set_visible(False)
+    # ax.spines['bottom'].set_linewidth(lw)
+    # ax.spines['left'].set_linewidth(lw)
+    # ax.plot(delta_list[0], n_inv_list[-1], ">k", clip_on=False, markersize=10, transform=trans)
+    # ax.plot(delta_list[-1], n_inv_list[0], "^k", clip_on=False, markersize=10, transform=trans)
+
+    # Fix: Compute rotated coordinates for the arrow annotation
+    theta = np.deg2rad(45)
+    def rotate_point(x, y, theta):
+        x_rot = x * np.cos(theta) - y * np.sin(theta)
+        y_rot = x * np.sin(theta) + y * np.cos(theta)
+        return x_rot, y_rot
+    # Start and end points
+    x0, y0 = delta_list[-1], n_inv_list[-1]
+    x1, y1 = delta_list[-1], n_inv_list[0]+0.02
+    x0r, y0r = rotate_point(x0, y0, theta)
+    x1r, y1r = rotate_point(x1, y1, theta)
+    ax.annotate('', xy=(x1r, y1r), xytext=(x0r, y0r),
+                arrowprops=dict(arrowstyle="->", color='black', lw=lw),
+                annotation_clip=False)
+    x0, y0 = delta_list[-1], n_inv_list[-1]
+    x1, y1 = delta_list[0]+0.02, n_inv_list[-1]
+    x0r, y0r = rotate_point(x0, y0, theta)
+    x1r, y1r = rotate_point(x1, y1, theta)
+    ax.annotate('', xy=(x1r, y1r), xytext=(x0r, y0r),
+                arrowprops=dict(arrowstyle="->", color='black', lw=lw),
+                annotation_clip=False)
+
     plt.tight_layout()
     plt.show()
     
     return fig
 
 fig = plot_pareto_front(results, config)
-fig.savefig("fig/pareto_front.png", dpi=300)
+# fig.savefig("fig/pareto_front.png", dpi=300)
 
