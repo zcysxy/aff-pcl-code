@@ -449,7 +449,7 @@ results_dict = {}
 
 # %%
 
-def plot_pareto_front(results_mse, config: Config):
+def plot_pareto_front(results_mse, config: Config, cmap_custom='YlGnBu_r', levels=8):
     """  
     Plots the L-shaped iso-performance contours from the simulation results.
     Smooths the contour plot using Gaussian filtering.
@@ -481,22 +481,29 @@ def plot_pareto_front(results_mse, config: Config):
     # Define custom RGB colors (normalized to [0,1])
     custom_colors = [
         (206/255, 77/255, 69/255),    # client1
-        # (230/255, 116/255, 85/255),  # client1.5 (added)
+        (230/255, 116/255, 85/255),  # client1.5 (added)
         (241/255, 156/255, 101/255),  # client2
         (255/255, 210/255, 101/255),   # client3
         (42/255, 168/255, 118/255),   # client4
         (10/255, 123/255, 131/255),   # client5
-        # (32/255, 111/255, 165/255),   # client5.5 (added)
-        # (84/255, 100/255, 200/255),   # client6
+        (32/255, 111/255, 165/255),   # client5.5 (added)
+        (84/255, 100/255, 200/255),   # client6
     ]
-    cmap_custom = 'YlGnBu_r'
-    cmap_custom = ListedColormap(custom_colors, name='custom_clients')
+    if not cmap_custom:
+        if levels < len(custom_colors):
+            cmap_custom = ListedColormap([custom_colors[i] for i in [0,2,3,4,5]], name='custom_clients')
+        else:
+            cmap_custom = ListedColormap(custom_colors, name='custom_clients')
+    if cmap_custom == 'YlGnBu_r':
+        lc = "#dcdcdc"
+    else:
+        lc = "#EBEBEB"
 
     # Use the reversed colormap
-    contour = ax.contourf(delta_list, n_inv_list, results_mse_smooth, levels=5, cmap=cmap_custom, transform=trans)
+    contour = ax.contourf(delta_list, n_inv_list, results_mse_smooth, levels=levels, cmap=cmap_custom, transform=trans)
     # ! Solid contour lines
     lw = 2
-    ax.contour(delta_list, n_inv_list, results_mse_smooth, levels=contour.levels, colors='black', linewidths=lw, alpha=0.8, transform=trans)
+    ax.contour(delta_list, n_inv_list, results_mse_smooth, levels=contour.levels, colors=lc, linewidths=lw, alpha=0.8, transform=trans)
 
     # Add a colorbar with log labels
     # cbar = fig.colorbar(contour)
@@ -530,15 +537,15 @@ def plot_pareto_front(results_mse, config: Config):
         y_rot = x * np.sin(theta) + y * np.cos(theta)
         return x_rot, y_rot
     # Start and end points
-    arrowdict = dict(arrowstyle="-|>", mutation_scale=20, color='black', lw=lw)
-    x0, y0 = delta_list[-1], n_inv_list[-1]
+    arrowdict = dict(arrowstyle="-|>", mutation_scale=20, color=lc, lw=lw)
+    x0, y0 = delta_list[-1], n_inv_list[-1]-0.003
     x1, y1 = delta_list[-1], n_inv_list[0]+0.02
     x0r, y0r = rotate_point(x0, y0, theta)
     x1r, y1r = rotate_point(x1, y1, theta)
     ax.annotate('', xy=(x1r, y1r), xytext=(x0r, y0r),
                 arrowprops=arrowdict,
                 annotation_clip=False)
-    x0, y0 = delta_list[-1], n_inv_list[-1]
+    x0, y0 = delta_list[-1]-0.003, n_inv_list[-1]
     x1, y1 = delta_list[0]+0.02, n_inv_list[-1]
     x0r, y0r = rotate_point(x0, y0, theta)
     x1r, y1r = rotate_point(x1, y1, theta)
@@ -551,7 +558,10 @@ def plot_pareto_front(results_mse, config: Config):
     
     return fig
 
-fig = plot_pareto_front(results, config)
-fig.patch.set_alpha(0.0)  # Make figure background transparent
-fig.savefig("fig/ts2.png", dpi=600, transparent=True)
+figs = ((None, 5), (None, 8), ('YlGnBu_r', 5), ('YlGnBu_r', 8))
+# figs = ((None, 8), ('YlGnBu_r', 8))
+for i in range(len(figs)):
+    fig = plot_pareto_front(results, config, cmap_custom=figs[i][0], levels=figs[i][1])
+    fig.patch.set_alpha(0.0)  # Make figure background transparent
+    fig.savefig(f"fig/ts{i+1}.png", dpi=600, transparent=True)
 
